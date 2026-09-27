@@ -1,0 +1,154 @@
+Original third-party notices preserved from Python source headers.
+
+BEV/way_utils_before.py
+Copyright (c) # Copyright (c) 2018-2020 CVC.
+
+This work is licensed under the terms of the MIT license.
+For a copy, see <https://opensource.org/licenses/MIT>.
+
+carla_env/envs/perception_models/config.py
+--------------------------------------------------------
+InternImage
+Copyright (c) 2022 OpenGVLab
+Licensed under The MIT License [see LICENSE for details]
+--------------------------------------------------------
+
+carla_env/envs/perception_models/models/__init__.py
+--------------------------------------------------------
+InternImage
+Copyright (c) 2022 OpenGVLab
+Licensed under The MIT License [see LICENSE for details]
+--------------------------------------------------------
+
+carla_env/envs/perception_models/models/build.py
+--------------------------------------------------------
+InternImage
+Copyright (c) 2022 OpenGVLab
+Licensed under The MIT License [see LICENSE for details]
+--------------------------------------------------------
+
+carla_env/envs/perception_models/models/intern_image.py
+--------------------------------------------------------
+InternImage
+Copyright (c) 2022 OpenGVLab
+Licensed under The MIT License [see LICENSE for details]
+--------------------------------------------------------
+
+carla_env/envs/perception_models/models/ops_dcnv3/functions/__init__.py
+--------------------------------------------------------
+InternImage
+Copyright (c) 2022 OpenGVLab
+Licensed under The MIT License [see LICENSE for details]
+--------------------------------------------------------
+
+carla_env/envs/perception_models/models/ops_dcnv3/functions/dcnv3_func.py
+--------------------------------------------------------
+InternImage
+Copyright (c) 2022 OpenGVLab
+Licensed under The MIT License [see LICENSE for details]
+--------------------------------------------------------
+
+carla_env/envs/perception_models/models/ops_dcnv3/modules/__init__.py
+--------------------------------------------------------
+InternImage
+Copyright (c) 2022 OpenGVLab
+Licensed under The MIT License [see LICENSE for details]
+--------------------------------------------------------
+
+carla_env/envs/perception_models/models/ops_dcnv3/modules/dcnv3.py
+--------------------------------------------------------
+InternImage
+Copyright (c) 2022 OpenGVLab
+Licensed under The MIT License [see LICENSE for details]
+--------------------------------------------------------
+
+carla_env/envs/perception_models/models/ops_dcnv3/setup.py
+--------------------------------------------------------
+InternImage
+Copyright (c) 2022 OpenGVLab
+Licensed under The MIT License [see LICENSE for details]
+--------------------------------------------------------
+
+carla_env/envs/perception_models/models/ops_dcnv3/test.py
+--------------------------------------------------------
+InternImage
+Copyright (c) 2022 OpenGVLab
+Licensed under The MIT License [see LICENSE for details]
+--------------------------------------------------------
+
+carla_env/envs/perception_models/ops/functions/__init__.py
+------------------------------------------------------------------------------------------------
+Deformable DETR
+Copyright (c) 2020 SenseTime. All Rights Reserved.
+Licensed under the Apache License, Version 2.0 [see LICENSE for details]
+------------------------------------------------------------------------------------------------
+Modified from https://github.com/chengdazhi/Deformable-Convolution-V2-PyTorch/tree/pytorch_1.0.0
+------------------------------------------------------------------------------------------------
+
+carla_env/envs/perception_models/ops/functions/ms_deform_attn_func.py
+------------------------------------------------------------------------------------------------
+Deformable DETR
+Copyright (c) 2020 SenseTime. All Rights Reserved.
+Licensed under the Apache License, Version 2.0 [see LICENSE for details]
+------------------------------------------------------------------------------------------------
+Modified from https://github.com/chengdazhi/Deformable-Convolution-V2-PyTorch/tree/pytorch_1.0.0
+------------------------------------------------------------------------------------------------
+
+carla_env/envs/perception_models/ops/modules/ms_deform_attn.py
+------------------------------------------------------------------------------------------------
+Deformable DETR
+Copyright (c) 2020 SenseTime. All Rights Reserved.
+Licensed under the Apache License, Version 2.0 [see LICENSE for details]
+------------------------------------------------------------------------------------------------
+Modified from https://github.com/chengdazhi/Deformable-Convolution-V2-PyTorch/tree/pytorch_1.0.0
+------------------------------------------------------------------------------------------------
+
+carla_env/envs/perception_models/ops/setup.py
+------------------------------------------------------------------------------------------------
+Deformable DETR
+Copyright (c) 2020 SenseTime. All Rights Reserved.
+Licensed under the Apache License, Version 2.0 [see LICENSE for details]
+------------------------------------------------------------------------------------------------
+Modified from https://github.com/chengdazhi/Deformable-Convolution-V2-PyTorch/tree/pytorch_1.0.0
+------------------------------------------------------------------------------------------------
+
+carla_env/envs/perception_models/ops/test.py
+------------------------------------------------------------------------------------------------
+Deformable DETR
+Copyright (c) 2020 SenseTime. All Rights Reserved.
+Licensed under the Apache License, Version 2.0 [see LICENSE for details]
+------------------------------------------------------------------------------------------------
+Modified from https://github.com/chengdazhi/Deformable-Convolution-V2-PyTorch/tree/pytorch_1.0.0
+------------------------------------------------------------------------------------------------
+
+carla_env/navigation/controller.py
+!/usr/bin/env python
+Copyright (c) 2018 Intel Labs.
+authors: German Ros (german.ros@intel.com)
+
+This work is licensed under the terms of the MIT license.
+For a copy, see <https://opensource.org/licenses/MIT>.
+
+carla_env/navigation/global_route_planner.py
+This work is licensed under the terms of the MIT license.
+For a copy, see <https://opensource.org/licenses/MIT>.
+
+carla_env/navigation/global_route_planner_dao.py
+This work is licensed under the terms of the MIT license.
+For a copy, see <https://opensource.org/licenses/MIT>.
+
+carla_env/navigation/local_planner.py
+!/usr/bin/env python
+Copyright (c) 2018 Intel Labs.
+authors: German Ros (german.ros@intel.com)
+
+This work is licensed under the terms of the MIT license.
+For a copy, see <https://opensource.org/licenses/MIT>.
+
+carla_env/tools/misc.py
+!/usr/bin/env python
+Copyright (c) 2018 Intel Labs.
+authors: German Ros (german.ros@intel.com)
+
+This work is licensed under the terms of the MIT license.
+For a copy, see <https://opensource.org/licenses/MIT>.
