@@ -5,32 +5,42 @@ import carla_env.envs.transforms as trans_utils
 
 
 def _get_traffic_light_waypoints(traffic_light, carla_map):
-
+    """
+    get area of a given traffic light
+    adapted from "carla-simulator/scenario_runner/srunner/scenariomanager/scenarioatomics/atomic_criteria.py"
+    """
     base_transform = traffic_light.get_transform()
     tv_loc = traffic_light.trigger_volume.location
     tv_ext = traffic_light.trigger_volume.extent
 
-
-    x_values = np.arange(-0.9 * tv_ext.x, 0.9 * tv_ext.x, 1.0)
+    # Discretize the trigger box into points
+    x_values = np.arange(-0.9 * tv_ext.x, 0.9 * tv_ext.x, 1.0)  # 0.9 to avoid crossing to adjacent lanes
     area = []
     for x in x_values:
         point_location = base_transform.transform(tv_loc + carla.Location(x=x))
         area.append(point_location)
 
-
+    # Get the waypoints of these points, removing duplicates
     ini_wps = []
     for pt in area:
         wpx = carla_map.get_waypoint(pt)
-
+        # As x_values are arranged in order, only the last one has to be checked
         if not ini_wps or ini_wps[-1].road_id != wpx.road_id or ini_wps[-1].lane_id != wpx.lane_id:
             ini_wps.append(wpx)
 
-
+    # Leaderboard: Advance them until the intersection
     stopline_wps = []
     stopline_vertices = []
     junction_wps = []
     for wpx in ini_wps:
+        # Below: just use trigger volume, otherwise it's on the zebra lines.
+        # stopline_wps.append(wpx)
+        # vec_forward = wpx.transform.get_forward_vector()
+        # vec_right = carla.Vector3D(x=-vec_forward.y, y=vec_forward.x, z=0)
 
+        # loc_left = wpx.transform.location - 0.4 * wpx.lane_width * vec_right
+        # loc_right = wpx.transform.location + 0.4 * wpx.lane_width * vec_right
+        # stopline_vertices.append([loc_left, loc_right])
 
         while not wpx.is_intersection:
             next_wp = wpx.next(0.5)[0]
@@ -48,7 +58,7 @@ def _get_traffic_light_waypoints(traffic_light, carla_map):
         loc_right = wpx.transform.location + 0.4 * wpx.lane_width * vec_right
         stopline_vertices.append([loc_left, loc_right])
 
-
+    # all paths at junction for this traffic light
     junction_paths = []
     path_wps = []
     wp_queue = deque(junction_wps)
@@ -102,7 +112,9 @@ class TrafficLightHandler:
 
     @staticmethod
     def get_light_state(vehicle, offset=0.0, dist_threshold=17.5):
-
+        '''
+        vehicle: carla.Vehicle
+        '''
         vec_tra = vehicle.get_transform()
         veh_dir = vec_tra.get_forward_vector()
 
@@ -131,7 +143,7 @@ class TrafficLightHandler:
                 same_road_1 = (hit_wp.road_id == wp_1.road_id) and (hit_wp.lane_id == wp_1.lane_id)
 
                 if (same_road or same_road_1) and dot_ve_wp > 0:
-
+                    # This light is red and is affecting our lane
                     loc_in_ev = trans_utils.loc_global_to_ref(wp.transform.location, vec_tra)
                     light_loc = np.array([loc_in_ev.x, loc_in_ev.y, loc_in_ev.z], dtype=np.float32)
                     light_state = traffic_light.state

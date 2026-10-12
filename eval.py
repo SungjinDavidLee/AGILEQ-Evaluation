@@ -25,7 +25,7 @@ args = vars(parser.parse_args())
 
 
 def parse_endpoint(text):
-
+    """"175" -> 175 (spawn_point index),  "15,2.55,0.3" -> (15.0, 2.55, 0.3) (coordinates)"""
     if text is None:
         return None
     parts = [p for p in text.replace("(", "").replace(")", "").split(",") if p.strip() != ""]
@@ -44,7 +44,7 @@ CONFIG = CONFIGS[args["config"]]
 
 from sb3_contrib import TQC, CrossQ
 from stable_baselines3 import PPO, DDPG, SAC, TD3
-from crossq_pp.crossq_pp import CrossQpp
+from crossq_pp.crossq_pp import CrossQpp 
 
 from utils import VideoRecorder, parse_wrapper_class
 from carla_env.state_commons import create_encode_state_fn
@@ -69,12 +69,12 @@ def run_eval(env, model, model_path=None, record_video=False):
 
     columns = [
         "model_id", "episode", "step", "throttle", "steer", "brake",
-        "vehicle_location_x", "vehicle_location_y", "vehicle_location_z",
+        "vehicle_location_x", "vehicle_location_y", "vehicle_location_z", 
         "vehicle_velocity_x", "vehicle_velocity_y", "vehicle_velocity_z",
         "vehicle_rotation_pitch", "vehicle_rotation_yaw", "vehicle_rotation_roll",
         "target_waypoint_x", "target_waypoint_y", "target_waypoint_z",
         "reward", "distance", "speed", "center_dev", "angle_next_waypoint",
-        "waypoint_x", "waypoint_y",
+        "waypoint_x", "waypoint_y", 
         "route_x", "route_y",
         "route_completion", "infraction_penalty", "mean_driving_speed",
         "timestamp"
@@ -92,14 +92,14 @@ def run_eval(env, model, model_path=None, record_video=False):
     print(f"Starting evaluation for {model_id}...")
 
 
-    try:
+    try:  # wrap the whole loop so the CSV is saved even if an exception occurs
         while episode_idx < 21:
             print(f"--- Episode {episode_idx + 1} ---")
             saved_route = False
             initial_vehicle_location = vector(env.vehicle.get_location())
             initial_heading = np.deg2rad(env.vehicle.get_transform().rotation.yaw)
             current_time = 0.0
-
+            
             done = False
             while not done:
                 action, _ = model.predict(state, deterministic=True)
@@ -116,25 +116,25 @@ def run_eval(env, model, model_path=None, record_video=False):
 
                 vehicle_relative = get_displacement_vector(initial_vehicle_location, vector(env.vehicle.get_location()), initial_heading)
                 waypoint_relative = get_displacement_vector(initial_vehicle_location, vector(env.current_waypoint.transform.location), initial_heading)
-
+                
                 control = env.vehicle.get_control()
                 vehicle_transform = env.vehicle.get_transform()
                 vehicle_location = vehicle_transform.location
                 vehicle_velocity = env.vehicle.get_velocity()
                 vehicle_rotation = vehicle_transform.rotation
-
+                
                 target_wp_location = env.next_waypoint.transform.location if hasattr(env, 'next_waypoint') and env.next_waypoint else None
                 new_row_data = {
                     "model_id": model_id, "episode": episode_idx, "step": env.step_count,
                     "timestamp": current_time,
                     "throttle": control.throttle, "steer": control.steer, "brake": control.brake,
-                    "vehicle_location_x": vehicle_location.x,
+                    "vehicle_location_x": vehicle_location.x, 
                     "vehicle_location_y": vehicle_location.y,
                     "vehicle_location_z": vehicle_location.z,
-                    "vehicle_velocity_x": vehicle_velocity.x,
+                    "vehicle_velocity_x": vehicle_velocity.x, 
                     "vehicle_velocity_y": vehicle_velocity.y,
                     "vehicle_velocity_z": vehicle_velocity.z,
-                    "vehicle_rotation_pitch": vehicle_rotation.pitch,
+                    "vehicle_rotation_pitch": vehicle_rotation.pitch, 
                     "vehicle_rotation_yaw": vehicle_rotation.yaw,
                     "vehicle_rotation_roll": vehicle_rotation.roll,
                     "target_waypoint_x": target_wp_location.x if target_wp_location else np.nan,
@@ -145,7 +145,9 @@ def run_eval(env, model, model_path=None, record_video=False):
                     "waypoint_x": waypoint_relative[0], "waypoint_y": waypoint_relative[1],
                     "route_completion": info.get('route_completion', 0.0),
                     "infraction_penalty": info.get('infraction_penalty', 1.0),
-                    "mean_driving_speed": info.get('mean_driving_speed', 0.0)
+                    "mean_driving_speed": info.get('mean_driving_speed', 0.0),
+                    "bypass_mode": env.bypass.mode,
+                    **{k: v for k, v in info.items() if k.startswith('bypass_') and not k.endswith('_total')}
                 }
                 df = pd.concat([df, pd.DataFrame([new_row_data]).drop(columns=['route_x', 'route_y'], errors='ignore')], ignore_index=True)
 
@@ -153,9 +155,9 @@ def run_eval(env, model, model_path=None, record_video=False):
                     rendered_frame = env.lender_image
                     video_recorder.add_frame(rendered_frame)
 
-
+            # checkpoint the CSV after every episode
             df.to_csv(csv_path, index=False)
-
+            
             episode_idx += 1
             if episode_idx < 21:
                 state = env.reset()
@@ -167,14 +169,14 @@ def run_eval(env, model, model_path=None, record_video=False):
         traceback.print_exc()
 
     finally:
-
+        # runs on both normal completion and failure
         if record_video:
             video_recorder.release()
 
-
+        # final save and summary report
         df.to_csv(csv_path, index=False)
         print(f"--- CSV saved: {csv_path} ---")
-
+        
         try:
             summary_eval(csv_path, town=args["town"])
         except Exception as summary_err:
@@ -184,14 +186,15 @@ def run_eval(env, model, model_path=None, record_video=False):
         print("Mean_reward  : ", np.mean(total_reward))
 
 
+
 if __name__ == "__main__":
     model_path = args["model"]
 
-    algorithm_dict = {"PPO": PPO, "DDPG": DDPG, "SAC": SAC,
+    algorithm_dict = {"PPO": PPO, "DDPG": DDPG, "SAC": SAC, 
                     "TD3": TD3, "TQC": TQC, "crossq": CrossQ,
                     "crossq_pp" : CrossQpp}
-
-
+    
+    
     if CONFIG["algorithm"] not in algorithm_dict:
         raise ValueError("Invalid algorithm name")
 
@@ -199,25 +202,25 @@ if __name__ == "__main__":
 
     if CONFIG["algorithm"] not in algorithm_dict:
         raise ValueError("Invalid algorithm name")
-
+    
     observation_space, encode_state_fn = create_encode_state_fn(CONFIG["state"])
 
     env = CarlaRouteEnv(host=args["host"], port=args["port"],
                         reward_fn=reward_functions[CONFIG["reward_fn"]],
                         observation_space=observation_space,
-                        encode_state_fn=encode_state_fn,
+                        encode_state_fn=encode_state_fn, 
                         fps=args["fps"], action_smoothing=CONFIG["action_smoothing"],
                         action_space_type='continuous', activate_spectator=False, eval=True,
                         activate_render=args["no_render"], eval_town=args["town"],
                         eval_route=eval_route)
-
+    
 
     for wrapper_class_str in CONFIG["wrappers"]:
 
         wrap_class, wrap_params = parse_wrapper_class(wrapper_class_str)
         env = wrap_class(env, *wrap_params)
 
-
+    
     model = AlgorithmRL.load(model_path, env=env, device='cuda')
 
     try:

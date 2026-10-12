@@ -1,3 +1,10 @@
+# Copyright (c) # Copyright (c) 2018-2020 CVC.
+#
+# This work is licensed under the terms of the MIT license.
+# For a copy, see <https://opensource.org/licenses/MIT>.
+
+""" This module contains a local planner to perform low-level waypoint following based on PID controllers. """
+
 from enum import Enum
 from collections import deque
 import random
@@ -8,12 +15,23 @@ from shapely.geometry import Polygon
 
 
 def get_speed(vehicle):
+    """
+    Compute speed of a vehicle in Km/h.
 
+        :param vehicle: the vehicle for which speed is calculated
+        :return: speed as a float in Km/h
+    """
     vel = vehicle.get_velocity()
 
     return 3.6 * math.sqrt(vel.x ** 2 + vel.y ** 2 + vel.z ** 2)
 def draw_waypoints(world, waypoints, z=0.5):
+    """
+    Draw a list of waypoints at a certain height given in z.
 
+        :param world: carla.world object
+        :param waypoints: list or iterable container with the waypoints to draw
+        :param z: height in meters
+    """
     for wpt in waypoints:
         wpt_t = wpt.transform
         begin = wpt_t.location + carla.Location(z=z)
@@ -21,11 +39,33 @@ def draw_waypoints(world, waypoints, z=0.5):
         end = begin + carla.Location(x=math.cos(angle), y=math.sin(angle))
         world.debug.draw_arrow(begin, end, arrow_size=0.3, life_time=1.0)
 class VehiclePIDController():
+    """
+    VehiclePIDController is the combination of two PID controllers
+    (lateral and longitudinal) to perform the
+    low level control a vehicle from client side
+    """
 
 
     def __init__(self, vehicle, args_lateral, args_longitudinal, offset=0, max_throttle=0.75, max_brake=0.3,
                  max_steering=0.8):
+        """
+        Constructor method.
 
+        :param vehicle: actor to apply to local planner logic onto
+        :param args_lateral: dictionary of arguments to set the lateral PID controller
+        using the following semantics:
+            K_P -- Proportional term
+            K_D -- Differential term
+            K_I -- Integral term
+        :param args_longitudinal: dictionary of arguments to set the longitudinal
+        PID controller using the following semantics:
+            K_P -- Proportional term
+            K_D -- Differential term
+            K_I -- Integral term
+        :param offset: If different than zero, the vehicle will drive displaced from the center line.
+        Positive values imply a right offset while negative ones mean a left one. Numbers high enough
+        to cause the vehicle to drive through other lanes might break the controller.
+        """
 
         self.max_brake = max_brake
         self.max_throt = max_throttle
@@ -38,7 +78,15 @@ class VehiclePIDController():
         self._lat_controller = PIDLateralController(self._vehicle, offset, **args_lateral)
 
     def run_step(self, target_speed, waypoint):
+        """
+        Execute one step of control invoking both lateral and longitudinal
+        PID controllers to reach a target waypoint
+        at a given target_speed.
 
+            :param target_speed: desired vehicle speed
+            :param waypoint: target location encoded as a waypoint
+            :return: distance (in meters) to the waypoint
+        """
 
         acceleration = self._lon_controller.run_step(target_speed)
         current_steering = self._lat_controller.run_step(waypoint)
@@ -50,6 +98,7 @@ class VehiclePIDController():
             control.throttle = 0.0
             control.brake = min(abs(acceleration), self.max_brake)
 
+        # Steering regulation: changes cannot happen abruptly, can't steer too much.
 
         if current_steering > self.past_steering + 0.1:
             current_steering = self.past_steering + 0.1
@@ -67,10 +116,12 @@ class VehiclePIDController():
         self.past_steering = steering
 
         return control
-
+    
     def smooth_steering(self, current_steering):
-
-
+        """
+        Smooth the steering command output by the policy and return it.
+        """
+        # Same rate limit and max-steer clipping as in run_step
         if current_steering > self.past_steering + 0.1:
             current_steering = self.past_steering + 0.1
         elif current_steering < self.past_steering - 0.1:
@@ -82,22 +133,32 @@ class VehiclePIDController():
             steering = max(-self.max_steer, current_steering)
 
         self.past_steering = steering
-
+        
         return steering
 
 
     def change_longitudinal_PID(self, args_longitudinal):
-
+        """Changes the parameters of the PIDLongitudinalController"""
         self._lon_controller.change_parameters(**args_longitudinal)
 
     def change_lateral_PID(self, args_lateral):
-
+        """Changes the parameters of the PIDLongitudinalController"""
         self._lon_controller.change_parameters(**args_lateral)
 class PIDLongitudinalController():
-
+    """
+    PIDLongitudinalController implements longitudinal control using a PID.
+    """
 
     def __init__(self, vehicle, K_P=1.0, K_I=0.0, K_D=0.0, dt=0.03):
+        """
+        Constructor method.
 
+            :param vehicle: actor to apply to local planner logic onto
+            :param K_P: Proportional term
+            :param K_D: Differential term
+            :param K_I: Integral term
+            :param dt: time differential in seconds
+        """
         self._vehicle = vehicle
         self._k_p = K_P
         self._k_i = K_I
@@ -106,7 +167,13 @@ class PIDLongitudinalController():
         self._error_buffer = deque(maxlen=10)
 
     def run_step(self, target_speed, debug=False):
+        """
+        Execute one step of longitudinal control to reach a given target speed.
 
+            :param target_speed: target speed in Km/h
+            :param debug: boolean for debugging
+            :return: throttle control
+        """
         current_speed = get_speed(self._vehicle)
 
         if debug:
@@ -115,7 +182,13 @@ class PIDLongitudinalController():
         return self._pid_control(target_speed, current_speed)
 
     def _pid_control(self, target_speed, current_speed):
+        """
+        Estimate the throttle/brake of the vehicle based on the PID equations
 
+            :param target_speed:  target speed in Km/h
+            :param current_speed: current speed of the vehicle in Km/h
+            :return: throttle/brake control
+        """
 
         error = target_speed - current_speed
         self._error_buffer.append(error)
@@ -130,17 +203,29 @@ class PIDLongitudinalController():
         return np.clip((self._k_p * error) + (self._k_d * _de) + (self._k_i * _ie), -1.0, 1.0)
 
     def change_parameters(self, K_P, K_I, K_D, dt):
-
+        """Changes the PID parameters"""
         self._k_p = K_P
         self._k_i = K_I
         self._k_d = K_D
         self._dt = dt
 
 class PIDLateralController():
-
+    """
+    PIDLateralController implements lateral control using a PID.
+    """
 
     def __init__(self, vehicle, offset=0, K_P=1.0, K_I=0.0, K_D=0.0, dt=0.03):
+        """
+        Constructor method.
 
+            :param vehicle: actor to apply to local planner logic onto
+            :param offset: distance to the center line. If might cause issues if the value
+                is large enough to make the vehicle invade other lanes.
+            :param K_P: Proportional term
+            :param K_D: Differential term
+            :param K_I: Integral term
+            :param dt: time differential in seconds
+        """
         self._vehicle = vehicle
         self._k_p = K_P
         self._k_i = K_I
@@ -150,19 +235,33 @@ class PIDLateralController():
         self._e_buffer = deque(maxlen=10)
 
     def run_step(self, waypoint):
+        """
+        Execute one step of lateral control to steer
+        the vehicle towards a certain waypoin.
 
+            :param waypoint: target waypoint
+            :return: steering control in the range [-1, 1] where:
+            -1 maximum steering to left
+            +1 maximum steering to right
+        """
         return self._pid_control(waypoint, self._vehicle.get_transform())
 
     def _pid_control(self, waypoint, vehicle_transform):
+        """
+        Estimate the steering angle of the vehicle based on the PID equations
 
-
+            :param waypoint: target waypoint
+            :param vehicle_transform: current transform of the vehicle
+            :return: steering control in the range [-1, 1]
+        """
+        # Get the ego's location and forward vector
         ego_loc = vehicle_transform.location
         v_vec = vehicle_transform.get_forward_vector()
         v_vec = np.array([v_vec.x, v_vec.y, 0.0])
 
-
+        # Get the vector vehicle-target_wp
         if self._offset != 0:
-
+            # Displace the wp to the side
             w_tran = waypoint.transform
             r_vec = w_tran.get_right_vector()
             w_loc = w_tran.location + carla.Location(x=self._offset*r_vec.x,
@@ -194,14 +293,17 @@ class PIDLateralController():
         return np.clip((self._k_p * _dot) + (self._k_d * _de) + (self._k_i * _ie), -1.0, 1.0)
 
     def change_parameters(self, K_P, K_I, K_D, dt):
-
+        """Changes the PID parameters"""
         self._k_p = K_P
         self._k_i = K_I
         self._k_d = K_D
         self._dt = dt
 
 class RoadOption(Enum):
+    """
+    RoadOption represents the possible topological configurations when moving from a segment of lane to other.
 
+    """
     VOID = -1
     LEFT = 1
     RIGHT = 2
@@ -212,7 +314,7 @@ class RoadOption(Enum):
 
 
 class Normal(object):
-
+    """Class for Normal agent."""
     max_speed = 50
     speed_lim_dist = 3
     speed_decrease = 10
@@ -225,9 +327,13 @@ def positive(num):
 
     return num if num > 0.0 else 0.0
 def get_trafficlight_trigger_location(traffic_light):
-
+    """
+    Calculates the yaw of the waypoint that represents the trigger volume of the traffic light
+    """
     def rotate_point(point, radians):
-
+        """
+        rotate a given point by a given angle
+        """
         rotated_x = math.cos(radians) * point.x - math.sin(radians) * point.y
         rotated_y = math.sin(radians) * point.x - math.cos(radians) * point.y
 
@@ -251,15 +357,15 @@ def is_within_distance(target_transform, reference_transform, max_distance, angl
     ])
     norm_target = np.linalg.norm(target_vector)
 
-
+    # If the vector is too short, we can simply stop here
     if norm_target < 0.001:
         return True
 
-
+    # Further than the max distance
     if norm_target > max_distance:
         return False
 
-
+    # We don't care about the angle, nothing else to check
     if not angle_interval:
         return True
 
@@ -273,7 +379,11 @@ def is_within_distance(target_transform, reference_transform, max_distance, angl
     return min_angle < angle < max_angle
 
 def compute_distance(location_1, location_2):
+    """
+    Euclidean distance between 3D points
 
+        :param location_1, location_2: 3D points
+    """
     x = location_2.x - location_1.x
     y = location_2.y - location_1.y
     z = location_2.z - location_1.z
@@ -296,9 +406,9 @@ class LocalPlanner(object):
         self._min_waypoint_queue_length = 100
         self._stop_waypoint_creation = False
         self._behavior = Normal()
-
+        # Base parameters
         self._dt = 1.0 / 20.0
-        self._target_speed = 20.0
+        self._target_speed = 20.0  # Km/h
         self._sampling_radius = 1.0
         self._args_lateral_dict = {'K_P': 1.6, 'K_I': 0.05, 'K_D': 0.2, 'dt': self._dt}
         self._args_longitudinal_dict = {'K_P': 1.0, 'K_I': 0.05, 'K_D': 0, 'dt': self._dt}
@@ -312,7 +422,7 @@ class LocalPlanner(object):
         self._follow_speed_limits = False
         self._min_speed = 5
         self._last_traffic_light = None
-
+        # Overload parameters
         if opt_dict:
             if 'dt' in opt_dict:
                 self._dt = opt_dict['dt']
@@ -338,14 +448,15 @@ class LocalPlanner(object):
                 self._follow_speed_limits = opt_dict['follow_speed_limits']
 
 
+        # initializing controller
         self._init_controller()
 
     def reset_vehicle(self):
-
+        """Reset the ego-vehicle"""
         self._vehicle = None
 
     def _init_controller(self):
-
+        """Controller initialization"""
         self._vehicle_controller = VehiclePIDController(self._vehicle,
                                                         args_lateral=self._args_lateral_dict,
                                                         args_longitudinal=self._args_longitudinal_dict,
@@ -354,25 +465,40 @@ class LocalPlanner(object):
                                                         max_brake=self._max_brake,
                                                         max_steering=self._max_steer)
 
-
+        # Compute the current vehicle waypoint
         current_waypoint = self._map.get_waypoint(self._vehicle.get_location())
         self.target_waypoint, self.target_road_option = (current_waypoint, RoadOption.LANEFOLLOW)
         self._waypoints_queue.append((self.target_waypoint, self.target_road_option))
 
     def set_speed(self, speed):
+        """
+        Changes the target speed
 
+        :param speed: new target speed in Km/h
+        :return:
+        """
         if self._follow_speed_limits:
             print("WARNING: The max speed is currently set to follow the speed limits. "
                   "Use 'follow_speed_limits' to deactivate this")
         self._target_speed = speed
 
     def follow_speed_limits(self, value=True):
+        """
+        Activates a flag that makes the max speed dynamically vary according to the spped limits
 
+        :param value: bool
+        :return:
+        """
         self._follow_speed_limits = value
 
     def _compute_next_waypoints(self, k=1):
+        """
+        Add new waypoints to the trajectory queue.
 
-
+        :param k: how many waypoints to compute
+        :return:
+        """
+        # check we do not overflow the queue
         available_entries = self._waypoints_queue.maxlen - len(self._waypoints_queue)
         k = min(available_entries, k)
 
@@ -383,11 +509,11 @@ class LocalPlanner(object):
             if len(next_waypoints) == 0:
                 break
             elif len(next_waypoints) == 1:
-
+                # only one option available ==> lanefollowing
                 next_waypoint = next_waypoints[0]
                 road_option = RoadOption.LANEFOLLOW
             else:
-
+                # random choice between the possible options
                 road_options_list = _retrieve_options(
                     next_waypoints, last_waypoint)
                 road_option = random.choice(road_options_list)
@@ -397,11 +523,20 @@ class LocalPlanner(object):
             self._waypoints_queue.append((next_waypoint, road_option))
 
     def set_global_plan(self, current_plan, stop_waypoint_creation=True, clean_queue=True):
+        """
+        Adds a new plan to the local planner. A plan must be a list of [carla.Waypoint, RoadOption] pairs
+        The 'clean_queue` parameter erases the previous plan if True, otherwise, it adds it to the old one
+        The 'stop_waypoint_creation' flag stops the automatic creation of random waypoints
 
+        :param current_plan: list of (carla.Waypoint, RoadOption)
+        :param stop_waypoint_creation: bool
+        :param clean_queue: bool
+        :return:
+        """
         if clean_queue:
             self._waypoints_queue.clear()
 
-
+        # Remake the waypoints queue if the new plan has a higher length than the queue
         new_plan_length = len(current_plan) + len(self._waypoints_queue)
         if new_plan_length > self._waypoints_queue.maxlen:
             new_waypoint_queue = deque(maxlen=new_plan_length)
@@ -415,16 +550,29 @@ class LocalPlanner(object):
         self._stop_waypoint_creation = stop_waypoint_creation
 
 
-    def run_step_in(self, debug=False):
 
+
+
+
+
+
+
+    def run_step_in(self, debug=False):
+        """
+        Execute one step of local planning which involves running the longitudinal and lateral PID controllers to
+        follow the waypoints trajectory.
+
+        :param debug: boolean flag to activate waypoints debugging
+        :return: control to be applied
+        """
         if self._follow_speed_limits:
             self._target_speed = self._vehicle.get_speed_limit()
 
-
+        # Add more waypoints too few in the horizon
         if not self._stop_waypoint_creation and len(self._waypoints_queue) < self._min_waypoint_queue_length:
             self._compute_next_waypoints(k=self._min_waypoint_queue_length)
 
-
+        # Purge the queue of obsolete waypoints
         veh_transforem = self._vehicle.get_transform()
         veh_location = self._vehicle.get_location()
         veh_forward_vector = veh_transforem.get_forward_vector()
@@ -439,11 +587,12 @@ class LocalPlanner(object):
 
 
             if len(self._waypoints_queue) - num_waypoint_removed == 1:
-                min_distance = 1
+                min_distance = 1  # Don't remove the last waypoint until very close by
             else:
                 min_distance = self._min_distance
 
-
+            # Pop the waypoint if the vehicle has passed it (behind the vehicle)
+            # or is within the minimum distance
             if dot_product < 0 or veh_location.distance(waypoint.transform.location) < min_distance:
                 num_waypoint_removed += 1
             else:
@@ -453,7 +602,7 @@ class LocalPlanner(object):
             for _ in range(num_waypoint_removed):
                 self._waypoints_queue.popleft()
 
-
+        # Get the target waypoint and move using the PID controllers. Stop if no target waypoint
         if len(self._waypoints_queue) == 0:
             control = carla.VehicleControl()
             control.steer = 0.0
@@ -469,10 +618,19 @@ class LocalPlanner(object):
             draw_waypoints(self._vehicle.get_world(), [self.target_waypoint], 1.0)
 
         return control
+    
 
 
+
+
+
+
+    
     def _update_information(self):
-
+        """
+        This method updates the information regarding the ego
+        vehicle based on the surrounding world.
+        """
         self._speed = get_speed(self._vehicle)
         self._speed_limit = self._vehicle.get_speed_limit()
         self.set_speed(self._speed_limit)
@@ -488,7 +646,14 @@ class LocalPlanner(object):
             self._incoming_direction = RoadOption.LANEFOLLOW
 
     def _affected_by_traffic_light(self, lights_list=None, max_distance=None):
+        """
+        Method to check if there is a red light affecting the vehicle.
 
+            :param lights_list (list of carla.TrafficLight): list containing TrafficLight objects.
+                If None, all traffic lights in the scene are used
+            :param max_distance (float): max distance for traffic lights to be considered relevant.
+                If None, the base threshold value is used
+        """
 
         if not lights_list:
             lights_list = self._world.get_actors().filter("*traffic_light*")
@@ -527,15 +692,17 @@ class LocalPlanner(object):
                 return (True, traffic_light)
 
         return (False, None)
-
+    
     def traffic_light_manager(self):
-
+        """
+        This method is in charge of behaviors for red lights.
+        """
         actor_list = self._world.get_actors()
         lights_list = actor_list.filter("*traffic_light*")
         affected, _ = self._affected_by_traffic_light(lights_list)
 
         return affected
-
+    
     def set_collision_sensor(self, collision_sensor):
         self._collision_sensor = collision_sensor
 
@@ -558,11 +725,11 @@ class LocalPlanner(object):
         ego_transform = self._vehicle.get_transform()
         ego_wpt = self._map.get_waypoint(self._vehicle.get_location())
 
-
+        # Get the right offset
         if ego_wpt.lane_id < 0 and lane_offset != 0:
             lane_offset *= -1
 
-
+        # Get the transform of the front of the ego
         ego_forward_vector = ego_transform.get_forward_vector()
         ego_extent = self._vehicle.bounding_box.extent.x
         ego_front_transform = ego_transform
@@ -575,7 +742,7 @@ class LocalPlanner(object):
             target_transform = target_vehicle.get_transform()
             target_wpt = self._map.get_waypoint(target_transform.location, lane_type=carla.LaneType.Any)
 
-
+            # Simplified version for outside junctions
             if not ego_wpt.is_junction or not target_wpt.is_junction:
 
                 if target_wpt.road_id != ego_wpt.road_id or target_wpt.lane_id != ego_wpt.lane_id  + lane_offset:
@@ -596,7 +763,7 @@ class LocalPlanner(object):
                 if is_within_distance(target_rear_transform, ego_front_transform, max_distance, [low_angle_th, up_angle_th]):
                     return (True, target_vehicle, compute_distance(target_transform.location, ego_transform.location))
 
-
+            # Waypoints aren't reliable, check the proximity of the vehicle to the route
             else:
                 route_bb = []
                 ego_location = ego_transform.location
@@ -618,11 +785,11 @@ class LocalPlanner(object):
                     route_bb.append([p2.x, p2.y, p2.z])
 
                 if len(route_bb) < 3:
-
+                    # 2 points don't create a polygon, nothing to check
                     return (False, None, -1)
                 ego_polygon = Polygon(route_bb)
 
-
+                # Compare the two polygons
                 for target_vehicle in vehicle_list:
                     target_extent = target_vehicle.bounding_box.extent.x
                     if target_vehicle.id == self._vehicle.id:
@@ -641,7 +808,7 @@ class LocalPlanner(object):
                 return (False, None, -1)
 
         return (False, None, -1)
-
+    
     def set_destination(self, end_location, start_location=None):
 
         if not start_location:
@@ -658,7 +825,13 @@ class LocalPlanner(object):
         self.set_global_plan(route_trace, clean_queue=clean_queue)
 
     def _tailgating(self, waypoint, vehicle_list):
+        """
+        This method is in charge of tailgating behaviors.
 
+            :param location: current location of the agent
+            :param waypoint: current waypoint of the agent
+            :param vehicle_list: list of all the nearby vehicles
+        """
 
         left_turn = waypoint.left_lane_marking.lane_change
         right_turn = waypoint.right_lane_marking.lane_change
@@ -690,7 +863,16 @@ class LocalPlanner(object):
                                          left_wpt.transform.location)
 
     def collision_and_car_avoid_manager(self, waypoint):
+        """
+        This module is in charge of warning in case of a collision
+        and managing possible tailgating chances.
 
+            :param location: current location of the agent
+            :param waypoint: current waypoint of the agent
+            :return vehicle_state: True if there is a vehicle nearby, False if not
+            :return vehicle: nearby vehicle
+            :return distance: distance to nearby vehicle
+        """
 
         vehicle_list = self._world.get_actors().filter("*vehicle*")
         def dist(v): return v.get_location().distance(waypoint.transform.location)
@@ -709,7 +891,7 @@ class LocalPlanner(object):
                 vehicle_list, max(
                     self._behavior.min_proximity_threshold, self._speed_limit / 3), up_angle_th=30)
 
-
+            # Check for tailgating
             if not vehicle_state and self._direction == RoadOption.LANEFOLLOW \
                     and not waypoint.is_junction and self._speed > 10 \
                     and self._behavior.tailgate_counter == 0:
@@ -737,13 +919,21 @@ class LocalPlanner(object):
         return walker_state, walker, distance
 
     def car_following_manager(self, vehicle, distance, debug=False):
+        """
+        Module in charge of car-following behaviors when there's
+        someone in front of us.
 
+            :param vehicle: car to follow
+            :param distance: distance from vehicle
+            :param debug: boolean for debugging
+            :return control: carla.VehicleControl
+        """
 
         vehicle_speed = get_speed(vehicle)
         delta_v = max(1, (self._speed - vehicle_speed) / 3.6)
         ttc = distance / delta_v if delta_v != 0 else distance / np.nextafter(0., 1.)
 
-
+        # Under safety time distance, slow down.
         if self._behavior.safety_time > ttc > 0.0:
             target_speed = min([
                 positive(vehicle_speed - self._behavior.speed_decrease),
@@ -752,7 +942,7 @@ class LocalPlanner(object):
             self.set_speed(target_speed)
             control = self.run_step_in(debug=debug)
 
-
+        # Actual safety distance area, try to follow the speed of the vehicle in front.
         elif 2 * self._behavior.safety_time > ttc >= self._behavior.safety_time:
             target_speed = min([
                 max(self._min_speed, vehicle_speed),
@@ -761,7 +951,7 @@ class LocalPlanner(object):
             self.set_speed(target_speed)
             control = self.run_step_in(debug=debug)
 
-
+        # Normal behavior.
         else:
             target_speed = min([
                 self._behavior.max_speed,
@@ -770,11 +960,11 @@ class LocalPlanner(object):
             control = self.run_step_in(debug=debug)
 
         return control
-
+    
     def run_step(self, debug=False):
 
         if not self._waypoints_queue:
-
+            # No route left: stop the vehicle
             return carla.VehicleControl(brake=1.0)
 
         self._update_information()
@@ -802,16 +992,16 @@ class LocalPlanner(object):
             self.set_speed(target_speed)
             control = self.run_step_in(debug=debug)
             return control
-
+        
         control = None
 
-
+        # 1: Red light
         if self.traffic_light_manager():
             control = self.emergency_stop()
 
             return control
 
-
+        # 2.1: Pedestrian
         walker_state, walker, w_distance = self.pedestrian_avoid_manager(ego_vehicle_wp)
         if walker_state:
             distance = w_distance - max(
@@ -822,7 +1012,7 @@ class LocalPlanner(object):
 
                 return control
 
-
+        # 2.2: Vehicle collision or tailgating
         vehicle_state, vehicle, distance = self.collision_and_car_avoid_manager(ego_vehicle_wp)
         if vehicle_state:
             distance = distance - max(
@@ -835,13 +1025,13 @@ class LocalPlanner(object):
 
             return control
 
-
+        # 3: Intersection
         elif self._incoming_waypoint.is_junction and (self._incoming_direction in [RoadOption.LEFT, RoadOption.RIGHT]):
             target_speed = min([self._behavior.max_speed, self._speed_limit - 5])
             self.set_speed(target_speed)
             control = self.run_step_in(debug=debug)
 
-
+        # 4: Normal case
         else:
             target_speed = min([
                 self._behavior.max_speed,
@@ -850,6 +1040,12 @@ class LocalPlanner(object):
             control = self.run_step_in(debug=debug)
 
         return control
+    
+
+
+
+
+
 
 
     def get_incoming_waypoint_and_direction(self, steps: int = 3):
@@ -865,11 +1061,20 @@ class LocalPlanner(object):
 
 
 def _retrieve_options(list_waypoints, current_waypoint):
+    """
+    Compute the type of connection between the current active waypoint and the multiple waypoints present in
+    list_waypoints. The result is encoded as a list of RoadOption enums.
 
+    :param list_waypoints: list with the possible target waypoints in case of multiple options
+    :param current_waypoint: current active waypoint
+    :return: list of RoadOption enums representing the type of connection from the active waypoint to each
+             candidate in list_waypoints
+    """
     options = []
     for next_waypoint in list_waypoints:
-
-
+        # this is needed because something we are linking to
+        # the beggining of an intersection, therefore the
+        # variation in angle is small
         next_next_waypoint = next_waypoint.next(3.0)[0]
         link = _compute_connection(current_waypoint, next_next_waypoint)
         options.append(link)
@@ -878,7 +1083,17 @@ def _retrieve_options(list_waypoints, current_waypoint):
 
 
 def _compute_connection(current_waypoint, next_waypoint, threshold=35):
+    """
+    Compute the type of topological connection between an active waypoint (current_waypoint) and a target waypoint
+    (next_waypoint).
 
+    :param current_waypoint: active waypoint
+    :param next_waypoint: target waypoint
+    :return: the type of topological connection encoded as a RoadOption enum:
+             RoadOption.STRAIGHT
+             RoadOption.LEFT
+             RoadOption.RIGHT
+    """
     n = next_waypoint.transform.rotation.yaw
     n = n % 360.0
 
@@ -892,3 +1107,18 @@ def _compute_connection(current_waypoint, next_waypoint, threshold=35):
         return RoadOption.LEFT
     else:
         return RoadOption.RIGHT
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

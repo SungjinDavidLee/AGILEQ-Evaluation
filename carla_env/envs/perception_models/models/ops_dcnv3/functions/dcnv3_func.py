@@ -1,3 +1,9 @@
+# --------------------------------------------------------
+# InternImage
+# Copyright (c) 2022 OpenGVLab
+# Licensed under The MIT License [see LICENSE for details]
+# --------------------------------------------------------
+
 from __future__ import absolute_import
 from __future__ import print_function
 from __future__ import division
@@ -74,7 +80,11 @@ class DCNv3Function(Function):
     def symbolic(g, input, offset, mask, kernel_h, kernel_w, stride_h,
                  stride_w, pad_h, pad_w, dilation_h, dilation_w, group,
                  group_channels, offset_scale, im2col_step, remove_center):
+        """Symbolic function for mmdeploy::DCNv3.
 
+        Returns:
+            DCNv3 op for onnx.
+        """
         return g.op(
             'mmdeploy::TRTDCNv3',
             input,
@@ -103,16 +113,16 @@ def _get_reference_points(spatial_shapes, device, kernel_h, kernel_w, dilation_h
 
     ref_y, ref_x = torch.meshgrid(
         torch.linspace(
-
-
+            # pad_h + 0.5,
+            # H_ - pad_h - 0.5,
             (dilation_h * (kernel_h - 1)) // 2 + 0.5,
             (dilation_h * (kernel_h - 1)) // 2 + 0.5 + (H_out - 1) * stride_h,
             H_out,
             dtype=torch.float32,
             device=device),
         torch.linspace(
-
-
+            # pad_w + 0.5,
+            # W_ - pad_w - 0.5,
             (dilation_w * (kernel_w - 1)) // 2 + 0.5,
             (dilation_w * (kernel_w - 1)) // 2 + 0.5 + (W_out - 1) * stride_w,
             W_out,
@@ -164,7 +174,8 @@ def dcnv3_core_pytorch(
         kernel_w, stride_h, stride_w, pad_h,
         pad_w, dilation_h, dilation_w, group,
         group_channels, offset_scale, remove_center):
-
+    # for debug and test only,
+    # need to use cuda version instead
 
     if remove_center and (kernel_h % 2 == 0 or kernel_w % 2 == 0 or kernel_w != kernel_h):
         raise ValueError('remove_center is only compatible with square odd kernel size.')
@@ -190,17 +201,17 @@ def dcnv3_core_pytorch(
 
     P_ = kernel_h * kernel_w - remove_center
     sampling_grids = 2 * sampling_locations - 1
-
+    # N_, H_in, W_in, group*group_channels -> N_, H_in*W_in, group*group_channels -> N_, group*group_channels, H_in*W_in -> N_*group, group_channels, H_in, W_in
     input_ = input.view(N_, H_in*W_in, group*group_channels).transpose(1, 2).\
         reshape(N_*group, group_channels, H_in, W_in)
-
+    # N_, H_out, W_out, group*P_*2 -> N_, H_out*W_out, group, P_, 2 -> N_, group, H_out*W_out, P_, 2 -> N_*group, H_out*W_out, P_, 2
     sampling_grid_ = sampling_grids.view(N_, H_out*W_out, group, P_, 2).transpose(1, 2).\
         flatten(0, 1)
-
+    # N_*group, group_channels, H_out*W_out, P_
     sampling_input_ = F.grid_sample(
         input_, sampling_grid_, mode='bilinear', padding_mode='zeros', align_corners=False)
 
-
+    # (N_, H_out, W_out, group*P_) -> N_, H_out*W_out, group, P_ -> (N_, group, H_out*W_out, P_) -> (N_*group, 1, H_out*W_out, P_)
     mask = mask.view(N_, H_out*W_out, group, P_).transpose(1, 2).\
         reshape(N_*group, 1, H_out*W_out, P_)
     output = (sampling_input_ * mask).sum(-1).view(N_,

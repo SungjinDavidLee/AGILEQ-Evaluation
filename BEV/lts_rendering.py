@@ -6,7 +6,7 @@ import torch.nn.functional as F
 from PIL import Image
 import cv2
 
-
+# Global Flags
 PIXELS_PER_METER = 5
 
 
@@ -14,11 +14,11 @@ class Renderer():
     def __init__(self, map_offset, map_dims, data_generation=True):
         self.args = {'device': 'cuda'}
         if data_generation:
-            self.PIXELS_AHEAD_VEHICLE = 0
+            self.PIXELS_AHEAD_VEHICLE = 0 # ego car is central
             self.local_view_dims = (500, 500)
             self.crop_dims = (500, 500)
         else:
-            self.PIXELS_AHEAD_VEHICLE = 100 + 10
+            self.PIXELS_AHEAD_VEHICLE = 100 + 10 # 10 is the weird shift the crop does in LBC
             self.local_view_dims = (320, 320)
             self.crop_dims = (192, 192)
 
@@ -39,12 +39,13 @@ class Renderer():
         return pos_px
 
     def world_to_pix_crop_batched(self, query_pos, crop_pos, crop_yaw, offset=(0, 0)):
-
-
+        # TODO: should be able to handle batches
+        
+        # # FIXME: why do we need to do this everywhere?
         crop_yaw = crop_yaw + np.pi / 2
         batch_size = crop_pos.shape[0]
 
-
+        # transform to crop pose
         rotation = torch.stack(
             [torch.cos(crop_yaw), -torch.sin(crop_yaw),
             torch.sin(crop_yaw),  torch.cos(crop_yaw)],
@@ -53,9 +54,9 @@ class Renderer():
 
         crop_pos_px = self.world_to_pix(crop_pos)
 
-
+        # correct for the fact that crop is only in front of ego agent
         shift = torch.tensor(
-            [0., - self.PIXELS_AHEAD_VEHICLE],
+            [0., - self.PIXELS_AHEAD_VEHICLE], 
             device=self.args['device'],
         )
 
@@ -65,17 +66,18 @@ class Renderer():
             (query_pos_px_map - crop_pos_px).unsqueeze(-1)
         query_pos_px = query_pos_px.squeeze(-1) - shift
 
-
+        # shift coordinate frame to top left corner of the crop
         pos_px_crop = query_pos_px + torch.tensor([self.crop_dims[1] / 2, self.crop_dims[0] / 2], device=self.args['device'])
 
         return pos_px_crop
 
     def world_to_pix_crop(self, query_pos, crop_pos, crop_yaw, offset=(0, 0)):
-
-
+        # TODO: should be able to handle batches
+        
+        # # FIXME: why do we need to do this everywhere?
         crop_yaw = crop_yaw + np.pi / 2
 
-
+        # transform to crop pose
         rotation = torch.tensor(
             [[torch.cos(crop_yaw), -torch.sin(crop_yaw)],
             [torch.sin(crop_yaw),  torch.cos(crop_yaw)]],
@@ -84,9 +86,9 @@ class Renderer():
 
         crop_pos_px = self.world_to_pix(crop_pos)
 
-
+        # correct for the fact that crop is only in front of ego agent
         shift = torch.tensor(
-            [0., - self.PIXELS_AHEAD_VEHICLE],
+            [0., - self.PIXELS_AHEAD_VEHICLE], 
             device=self.args['device'],
         )
 
@@ -94,7 +96,7 @@ class Renderer():
 
         query_pos_px = rotation.T @ (query_pos_px_map - crop_pos_px) - shift
 
-
+        # shift coordinate frame to top left corner of the crop
         pos_px_crop = query_pos_px + torch.tensor([self.crop_dims[1] / 2, self.crop_dims[0] / 2], device=self.args['device'])
 
         return pos_px_crop
@@ -108,22 +110,24 @@ class Renderer():
         return pos_rel
 
     def render_agent(self, grid, vehicle, position, orientation):
-
-        orientation = orientation - np.pi/2
+        """
+        """
+        orientation = orientation - np.pi/2  #TODO
         scale_h = torch.tensor([grid.size(2) / vehicle.size(2)], device=self.args['device'])
         scale_w = torch.tensor([grid.size(3) / vehicle.size(3)], device=self.args['device'])
 
-
+        # convert position from world to relative image coordinates
         position = self.world_to_rel(position) * -1
-
-
+        
+        # TODO: build composite transform directly
+        # build individual transforms
         scale_transform = torch.tensor(
             [[scale_w, 0, 0],
             [0, scale_h, 0],
             [0, 0, 1]],
             device=self.args['device'],
         ).view(1, 3, 3)
-
+        
         rotation_transform = torch.tensor(
             [[torch.cos(orientation), torch.sin(orientation), 0],
             [-torch.sin(orientation), torch.cos(orientation), 0],
@@ -134,57 +138,59 @@ class Renderer():
         translation_transform = torch.tensor(
             [[1, 0, position[0]],
             [0, 1, position[1]],
-            [0, 0, 1]],
+            [0, 0, 1]], 
             device=self.args['device'],
         ).view(1, 3, 3)
 
-
+        # chain transforms
         affine_transform = scale_transform @ rotation_transform @ translation_transform
 
         affine_grid = F.affine_grid(
-            affine_transform[:, 0:2, :],
+            affine_transform[:, 0:2, :], # expects Nx2x3
             (1, 1, grid.shape[2], grid.shape[3]),
             align_corners=True,
         )
 
         vehicle_rendering = F.grid_sample(
-            vehicle,
+            vehicle, 
             affine_grid,
             align_corners=True,
         )
-
+        
         grid[:, 5, ...] += vehicle_rendering.squeeze()
 
         return grid
 
     def render_agent_bv(
-            self,
-            grid,
-            grid_pos,
-            grid_orientation,
-            vehicle,
-            position,
+            self, 
+            grid, 
+            grid_pos, 
+            grid_orientation, 
+            vehicle, 
+            position, 
             orientation,
             channel=5,
-            state=None,
+            state=None, # traffic light_state
         ):
-
-
+        """
+        """
+        # FIXME: why do we need to do this everywhere?
         orientation = orientation + np.pi / 2
 
-
+        # Only render if visible in local view
         pos_pix_bv = self.world_to_pix_crop(position, grid_pos, grid_orientation)
 
-
+        # to centered relative coordinates for STN
         h, w = (grid.size(-2), grid.size(-1))
-        pos_rel_bv = pos_pix_bv / torch.tensor([h, w], device=self.args['device'])
-        pos_rel_bv = pos_rel_bv * 2 -1
-        pos_rel_bv = pos_rel_bv * -1
+        pos_rel_bv = pos_pix_bv / torch.tensor([h, w], device=self.args['device'])  # normalize over h and w
+        pos_rel_bv = pos_rel_bv * 2 -1  # change domain from [0, 1] to [-1, 1]
+        pos_rel_bv = pos_rel_bv * -1  # Because the STN coordinates are weird
 
         scale_h = torch.tensor([grid.size(2) / vehicle.size(2)], device=self.args['device'])
         scale_w = torch.tensor([grid.size(3) / vehicle.size(3)], device=self.args['device'])
-
-
+        
+        # TODO: build composite transform directly
+        # build individual transforms
         scale_transform = torch.tensor(
             [[scale_w, 0, 0],
             [0, scale_h, 0],
@@ -192,12 +198,13 @@ class Renderer():
             device=self.args['device']
         ).view(1, 3, 3)
 
-
+        # this is the inverse of the rotation matrix for the visibility check
+        # because now we want crop coordinates instead of world coordinates
         grid_orientation = grid_orientation + np.pi / 2
         rotation_transform = torch.tensor(
             [[torch.cos(orientation - grid_orientation), torch.sin(orientation - grid_orientation), 0],
             [- torch.sin(orientation - grid_orientation), torch.cos(orientation - grid_orientation), 0],
-            [0, 0, 1]],
+            [0, 0, 1]], 
             device=self.args['device']
         ).view(1, 3, 3)
 
@@ -208,25 +215,25 @@ class Renderer():
             device=self.args['device']
         ).view(1, 3, 3)
 
-
+        # chain transforms
         affine_transform = scale_transform @ rotation_transform @ translation_transform
 
         affine_grid = F.affine_grid(
-            affine_transform[:, 0:2, :],
+            affine_transform[:, 0:2, :], # expects Nx2x3
             (1, 1, grid.shape[2], grid.shape[3]),
             align_corners=True,
         )
 
         vehicle_rendering = F.grid_sample(
-            vehicle,
+            vehicle, 
             affine_grid,
             align_corners=True,
         )
-
+        
         if state == 'Green':
             channel = 4
         elif state == 'Yellow':
-            channel = 3
+            channel = 3   
         elif state == 'Red':
             channel = 2
 
@@ -234,32 +241,34 @@ class Renderer():
 
 
     def render_agent_bv_batched(
-            self,
-            grid,
-            grid_pos,
-            grid_orientation,
-            vehicle,
-            position,
+            self, 
+            grid, 
+            grid_pos, 
+            grid_orientation, 
+            vehicle, 
+            position, 
             orientation,
             channel=5,
         ):
-
-
+        """
+        """
+        # FIXME: why do we need to do this everywhere?
         orientation = orientation + np.pi / 2
         batch_size = position.shape[0]
-
+        
         pos_pix_bv = self.world_to_pix_crop_batched(position, grid_pos, grid_orientation)
 
-
+        # to centered relative coordinates for STN
         h, w = (grid.size(-2), grid.size(-1))
-        pos_rel_bv = pos_pix_bv / torch.tensor([h, w], device=self.args['device'])
-        pos_rel_bv = pos_rel_bv * 2 -1
-        pos_rel_bv = pos_rel_bv * -1
+        pos_rel_bv = pos_pix_bv / torch.tensor([h, w], device=self.args['device'])  # normalize over h and w
+        pos_rel_bv = pos_rel_bv * 2 -1  # change domain from [0, 1] to [-1, 1]
+        pos_rel_bv = pos_rel_bv * -1  # Because the STN coordinates are weird
 
         scale_h = torch.tensor([grid.size(2) / vehicle.size(2)], device=self.args['device'])
         scale_w = torch.tensor([grid.size(3) / vehicle.size(3)], device=self.args['device'])
-
-
+        
+        # TODO: build composite transform directly
+        # build individual transforms
         scale_transform = torch.tensor(
             [[scale_w, 0, 0],
             [0, scale_h, 0],
@@ -267,7 +276,8 @@ class Renderer():
             device=self.args['device']
         ).view(1, 3, 3).expand(batch_size, -1, -1)
 
-
+        # this is the inverse of the rotation matrix for the visibility check
+        # because now we want crop coordinates instead of world coordinates
         grid_orientation = grid_orientation + np.pi / 2
         angle_delta = orientation - grid_orientation
         zeros = torch.zeros_like(angle_delta)
@@ -275,7 +285,7 @@ class Renderer():
         rotation_transform = torch.stack(
             [ torch.cos(angle_delta), torch.sin(angle_delta), zeros,
             -torch.sin(angle_delta), torch.cos(angle_delta), zeros,
-            zeros,                   zeros,                  ones],
+            zeros,                   zeros,                  ones], 
             dim=-1
         ).view(batch_size, 3, 3)
 
@@ -286,44 +296,46 @@ class Renderer():
             dim=-1,
         ).view(batch_size, 3, 3)
 
-
+        # chain transforms
         affine_transform = scale_transform @ rotation_transform @ translation_transform
 
         affine_grid = F.affine_grid(
-            affine_transform[:, 0:2, :],
+            affine_transform[:, 0:2, :], # expects Nx2x3
             (batch_size, 1, grid.shape[2], grid.shape[3]),
             align_corners=True,
         )
 
         vehicle_rendering = F.grid_sample(
-            vehicle,
+            vehicle, 
             affine_grid,
             align_corners=True,
         )
-
+        
         for i in range(batch_size):
             grid[:, int(channel[i].item()), ...] += vehicle_rendering[i].squeeze()
-
-
+    
+    
     def render_agent_stopline_bv_batched(
-            self,
-            grid,
-            grid_pos,
-            grid_orientation,
-            position,
+            self, 
+            grid, 
+            grid_pos, 
+            grid_orientation, 
+            position, 
 
             channel=5,
         ):
-
+        """
+        """
+        # FIXME: why do we need to do this everywhere?
 
         batch_size = position.shape[0]
-        start_pos = position[:,:, :2]
+        start_pos = position[:,:, :2]  
         end_pos = position[:,:, 2:]
 
 
-        start_pos_pix = self.world_to_pix_crop_batched(start_pos, grid_pos, grid_orientation)
-        end_pos_pix = self.world_to_pix_crop_batched(end_pos, grid_pos, grid_orientation)
-
+        start_pos_pix = self.world_to_pix_crop_batched(start_pos, grid_pos, grid_orientation)  
+        end_pos_pix = self.world_to_pix_crop_batched(end_pos, grid_pos, grid_orientation)      
+        
         for i in range(batch_size):
             ch = int(channel[i].item()) if isinstance(channel, torch.Tensor) else channel
             img = grid[0, ch].detach().cpu().numpy()
@@ -338,9 +350,9 @@ class Renderer():
     def visualize_light_birdview(self, grid):
 
         colors = {
-            2: (255, 0, 0),
-            3: (255, 255, 0),
-            4: (0, 255, 0),
+            2: (255, 0, 0),      # Red
+            3: (255, 255, 0),    # Yellow
+            4: (0, 255, 0),      # Green
         }
 
         grid = grid.detach().cpu()
@@ -348,34 +360,34 @@ class Renderer():
         grid_img = np.zeros((grid.shape[2], grid.shape[3], 3), dtype=np.uint8)
 
         for channel_idx, color in colors.items():
-            mask = grid[0, channel_idx, ...] > 0
+            mask = grid[0, channel_idx, ...] > 0 
             grid_img[mask] = color
 
         pil_img = Image.fromarray(grid_img)
 
         return pil_img
-
+        
     def visualize_walker_view(self, grid):
 
         grid = grid.detach().cpu()
 
         grid_img = np.zeros((grid.shape[2], grid.shape[3]), dtype=np.uint8)
 
-        mask = grid[0, 6, ...] > 0
-        grid_img[mask] = 255
+        mask = grid[0, 6, ...] > 0 
+        grid_img[mask] = 255 
 
         pil_img = Image.fromarray(grid_img)
 
         return pil_img
-
+    
     def visualize_das_view(self, grid):
 
         grid = grid.detach().cpu()
 
         grid_img = np.zeros((grid.shape[2], grid.shape[3]), dtype=np.uint8)
 
-        mask = grid[0, 0, ...] > 0
-        grid_img[mask] = 255
+        mask = grid[0, 0, ...] > 0 
+        grid_img[mask] = 255 
 
         pil_img = Image.fromarray(grid_img)
 
@@ -386,32 +398,32 @@ class Renderer():
 
         grid_img = np.zeros((grid.shape[2], grid.shape[3]), dtype=np.uint8)
 
-        mask = grid[0, 1, ...] > 0
-        grid_img[mask] = 255
+        mask = grid[0, 1, ...] > 0 
+        grid_img[mask] = 255 
 
         pil_img = Image.fromarray(grid_img)
 
         return pil_img
-
+    
     def visualize_stopline_view(self, grid):
 
         grid = grid.detach().cpu()
 
         grid_img = np.zeros((grid.shape[2], grid.shape[3]), dtype=np.uint8)
 
-        mask = grid[0, 7, ...] > 0
-        grid_img[mask] = 255
+        mask = grid[0, 7, ...] > 0 
+        grid_img[mask] = 255 
 
         pil_img = Image.fromarray(grid_img)
 
         return pil_img
-
+        
     def visualize_vehicle_view(self, grid):
         grid = grid.detach().cpu()
 
         grid_img = np.zeros((grid.shape[2], grid.shape[3]), dtype=np.uint8)
 
-        mask = grid[0, 5, ...] > 0
+        mask = grid[0, 5, ...] > 0 
         grid_img[mask] = 255
 
         pil_img = Image.fromarray(grid_img)
@@ -420,10 +432,12 @@ class Renderer():
 
 
     def get_local_birdview(self, grid, position, orientation):
+        """
+        """
 
-
+        # convert position from world to relative image coordinates
         position = self.world_to_rel(position)
-
+        # FIXME: Inconsistent with global rendering function.
         orientation = orientation + np.pi/2
 
         scale_transform = torch.tensor(
@@ -432,16 +446,17 @@ class Renderer():
             [0, 0, 1]],
             device=self.args['device']
         ).view(1, 3, 3)
-
-
+        
+        # FIXME: Inconsistent with global rendering function. 
         rotation_transform = torch.tensor(
             [[torch.cos(orientation), -torch.sin(orientation), 0],
             [torch.sin(orientation), torch.cos(orientation), 0],
             [0, 0, 1]],
             device=self.args['device']
         ).view(1, 3, 3)
-
-
+        
+        # shift cropping position so ego agent is at bottom boundary, including
+        # this weird pixel shift that LBC does for some reason
         shift = torch.tensor([0., - 2 * self.PIXELS_AHEAD_VEHICLE / self.map_dims[0]], device=self.args['device'])
         position = position + rotation_transform[0, 0:2, 0:2] @ shift
 
@@ -452,7 +467,7 @@ class Renderer():
             device=self.args['device']
         ).view(1, 3, 3)
 
-
+        # chain tansforms
         local_view_transform = scale_transform @ translation_transform @ rotation_transform
 
         affine_grid = F.affine_grid(
@@ -462,7 +477,7 @@ class Renderer():
         )
 
         local_view = F.grid_sample(
-            grid,
+            grid, 
             affine_grid,
             align_corners=True,
         )
@@ -470,72 +485,80 @@ class Renderer():
         return local_view
 
     def step(self, actions):
-
-
+        """
+        """
+        # 1. update ego agent
         print(self.ego.state, actions)
         self.ego.set_state(self.ego.motion_model(self.ego.state, actions=actions))
         self.adv.set_state(self.adv.motion_model(self.adv.state))
 
-
+        # 2. update adversarial agents
+        # ...
         self.timestep +=1
 
     def visualize_grid(self, grid, type='LTS_Reduced'):
-
+        """
+        """
         if type=='LTS_Reduced':
             colors = [
-                (102, 102, 102),
-                (253, 253, 17),
-
-
-                (0, 0, 142),
-                (220, 20, 60),
+                (102, 102, 102), # road
+                (253, 253, 17), # lane
+                # (204, 6, 5), # red light
+                # (250, 210, 1), # yellow light
+                # (39, 232, 51), # green light
+                (0, 0, 142), # vehicle
+                (220, 20, 60), # pedestrian
             ]
 
         elif type=='Trajectory_planner':
             colors = [
-                (102, 102, 102),
-                (253, 253, 17),
-
-
+                (102, 102, 102), # road
+                (253, 253, 17), # lane
+                # (204, 6, 5), # red light
+                # (250, 210, 1), # yellow light
+                # (39, 232, 51), # green light
+                # (0, 0, 142), # vehicle
+                # (220, 20, 60), # pedestrian
             ]
 
         elif type=='LTS_Full':
             colors = [
-                (102, 102, 102),
-                (253, 253, 17),
-                (204, 6, 5),
-                (250, 210, 1),
-                (39, 232, 51),
-                (0, 0, 142),
-                (220, 20, 60),
+                (102, 102, 102), # road
+                (253, 253, 17), # lane
+                (204, 6, 5), # red light
+                (250, 210, 1), # yellow light
+                (39, 232, 51), # green light
+                (0, 0, 142), # vehicle
+                (220, 20, 60), # pedestrian
             ]
         elif type=='LTS_FullFuture':
             colors = [
-                (102, 102, 102),
-                (253, 253, 17),
-                (204, 6, 5),
-                (250, 210, 1),
-                (39, 232, 51),
-                (0, 0, 142),
-                (220, 20, 60),
-                *[(0, 0, 142+(11*i)) for i in range(grid.shape[1]-7)],
+                (102, 102, 102), # road
+                (253, 253, 17), # lane
+                (204, 6, 5), # red light
+                (250, 210, 1), # yellow light
+                (39, 232, 51), # green light
+                (0, 0, 142), # vehicle
+                (220, 20, 60), # pedestrian
+                *[(0, 0, 142+(11*i)) for i in range(grid.shape[1]-7)], # vehicle future
             ]
         elif type=='LTS_ReducedFuture':
             colors = [
-                (102, 102, 102),
-                (253, 253, 17),
-
-
-                (0, 0, 142),
-                (220, 20, 60),
-                *[(0, 0, 142+(11*i)) for i in range(grid.shape[1]-7)],
+                (102, 102, 102), # road
+                (253, 253, 17), # lane
+                # (204, 6, 5), # red light
+                # (250, 210, 1), # yellow light
+                # (39, 232, 51), # green light
+                (0, 0, 142), # vehicle
+                (220, 20, 60), # pedestrian
+                *[(0, 0, 142+(11*i)) for i in range(grid.shape[1]-7)], # vehicle future
             ]
-
+        
         grid = grid.detach().cpu()
 
         grid_img = np.zeros((grid.shape[2:4] + (3,)), dtype=np.uint8)
         grid_img[...] = [0, 0, 0]
-
+        
         for i in range(len(colors)):
             grid_img[grid[0, i, ...] > 0] = colors[i]
 
@@ -544,21 +567,22 @@ class Renderer():
         return pil_img
 
     def bev_to_gray_img(self, grid):
-
+        """
+        """
         colors = [
-            1,
-            2,
-            3,
-            4,
-            5,
-            6,
-            7,
+            1, # road
+            2, # lane
+            3, # red light
+            4, # yellow light
+            5, # green light
+            6, # vehicle
+            7, # pedestrian
         ]
-
+        
         grid = grid.detach().cpu()
 
         grid_img = np.zeros((grid.shape[2:4]), dtype=np.uint8)
-
+        
         for i in range(len(colors)):
             grid_img[grid[0, i, ...] > 0] = colors[i]
 

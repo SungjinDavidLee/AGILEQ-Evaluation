@@ -1,0 +1,134 @@
+{
+  "_comment": "iter5 plus a video-only overlay of the global route (red dots); the overlay never enters the policy state.",
+  "enable_bypass": true,
+  "enable_single_npc_scenario": true,
+  "start_carla": false,
+  "n_episodes": 1,
+  "trigger": {
+    "speed_max_kmh": 5.0,
+    "n_trigger_steps": 45
+  },
+  "legality": {
+    "lookahead_m": 40.0
+  },
+  "safety": {
+    "safety_prob_threshold": 0.5,
+    "clearance_m": 0.2,
+    "ego_mask_clear_margin_m": 0.3
+  },
+  "frenet": {
+    "lane_change_length_m": 8.0,
+    "return_margin_m": 7.0,
+    "tail_m": 10.0,
+    "target_speed_kmh": 15.0,
+    "max_points_aw": 8,
+    "sample_spacing_m": 1.5,
+    "hold_offset_frac": 1.0
+  },
+  "scenario": {
+    "town": "town04",
+    "start_xyzyaw": [
+      116.77,
+      228.87,
+      0.3,
+      -25.73
+    ],
+    "dest_xyz": [
+      289.2,
+      163.0,
+      0.3
+    ],
+    "npc_ahead_m": 14.5,
+    "npc_blueprint": "vehicle.lincoln.mkz_2020",
+    "npc_speed_kmh": 0.0
+  },
+  "c2_state": [
+    "steer",
+    "throttle",
+    "brake",
+    "speed",
+    "bev_image",
+    "traffic_light_state",
+    "jerk",
+    "waypoints",
+    "previous_state",
+    "stop_line"
+  ],
+  "debug_image_every": 15,
+  "commit": {
+    "abort_consecutive_steps": 5,
+    "min_hold_s": 1.5,
+    "near_horizon_m": 10.0,
+    "ego_corridor_time_s": 1.5,
+    "ego_corridor_min_m": 2.0,
+    "off_path_m": 2.5,
+    "f_stall_s": 5.0,
+    "path_ignore_m": 2.0,
+    "f_speed_cap_kmh": 6.0,
+    "f_speed_cap_brake": 0.3
+  },
+  "emergency": {
+    "stop_speed_kmh": 0.5,
+    "exit_hold_s": 1.0,
+    "clear_m": 6.0
+  },
+  "demo_limits": {
+    "stop_timeout_s": 20.0,
+    "max_episode_s": 60.0
+  },
+  "gt_veh_shape_noise": {
+    "preset": "D",
+    "seed": 7
+  },
+  "gt_all_channels": {
+    "enabled": true,
+    "seed": 11,
+    "road": {
+      "type": "static",
+      "amp_px": 1.2,
+      "sig_px": 3.0,
+      "hole_frac": 0.0,
+      "hole_sig_px": 2.5
+    },
+    "lane": {
+      "type": "lane_like",
+      "gap_frac": 0.35,
+      "gap_m": [
+        1.2,
+        3.0
+      ],
+      "thin_frac": 0.4,
+      "thick_frac": 0.2,
+      "thick_m": 3.0,
+      "bend_px": 1.0,
+      "bend_m": 5.0,
+      "seed": 13
+    },
+    "stop": {
+      "type": "lane_like",
+      "gap_frac": 0.25,
+      "gap_m": [
+        0.8,
+        2.0
+      ],
+      "thin_frac": 0.3,
+      "thick_frac": 0.2,
+      "thick_m": 2.0,
+      "bend_px": 0.6,
+      "bend_m": 3.0,
+      "seed": 17
+    }
+  },
+  "vis_global_route": {
+    "color_rgb": [
+      255,
+      0,
+      0
+    ],
+    "dot_every_wp": 2,
+    "ahead_wp": 45,
+    "cam_radius_near": 12,
+    "cam_radius_far": 4,
+    "bev_radius": 2
+  }
+}

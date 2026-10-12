@@ -1,3 +1,11 @@
+# ------------------------------------------------------------------------------------------------
+# Deformable DETR
+# Copyright (c) 2020 SenseTime. All Rights Reserved.
+# Licensed under the Apache License, Version 2.0 [see LICENSE for details]
+# ------------------------------------------------------------------------------------------------
+# Modified from https://github.com/chengdazhi/Deformable-Convolution-V2-PyTorch/tree/pytorch_1.0.0
+# ------------------------------------------------------------------------------------------------
+
 from __future__ import absolute_import
 from __future__ import print_function
 from __future__ import division
@@ -76,3 +84,6 @@ if __name__ == '__main__':
 
     for channels in [30, 32, 64, 71, 1025, 2048, 3096]:
         check_gradient_numerical(channels, True, True, True)
+
+
+

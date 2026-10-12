@@ -1,3 +1,9 @@
+# --------------------------------------------------------
+# InternImage
+# Copyright (c) 2022 OpenGVLab
+# Licensed under The MIT License [see LICENSE for details]
+# --------------------------------------------------------
+
 import torch
 import torch.nn as nn
 import torch.utils.checkpoint as checkpoint
@@ -60,8 +66,21 @@ def build_act_layer(act_layer):
 
 
 class CrossAttention(nn.Module):
-
-
+    r""" Cross Attention Module
+    Args:
+        dim (int): Number of input channels.
+        num_heads (int): Number of attention heads. Default: 8
+        qkv_bias (bool, optional):  If True, add a learnable bias to q, k, v.
+            Default: False.
+        qk_scale (float | None, optional): Override default qk scale of
+            head_dim ** -0.5 if set. Default: None.
+        attn_drop (float, optional): Dropout ratio of attention weight.
+            Default: 0.0
+        proj_drop (float, optional): Dropout ratio of output. Default: 0.0
+        attn_head_dim (int, optional): Dimension of attention head.
+        out_dim (int, optional): Dimension of output.
+    """
+    
     def __init__(self,
                  dim,
                  num_heads=8,
@@ -113,7 +132,7 @@ class CrossAttention(nn.Module):
         q = F.linear(input=x, weight=self.q.weight, bias=q_bias)
         q = q.reshape(B, N, 1, self.num_heads,
                       -1).permute(2, 0, 3, 1,
-                                  4).squeeze(0)
+                                  4).squeeze(0)  # (B, N_head, N_q, dim)
 
         k = F.linear(input=k, weight=self.k.weight, bias=k_bias)
         k = k.reshape(B, N_k, 1, self.num_heads, -1).permute(2, 0, 3, 1,
@@ -124,7 +143,7 @@ class CrossAttention(nn.Module):
                                                              4).squeeze(0)
 
         q = q * self.scale
-        attn = (q @ k.transpose(-2, -1))
+        attn = (q @ k.transpose(-2, -1))  # (B, N_head, N_q, N_k)
 
         attn = attn.softmax(dim=-1)
         attn = self.attn_drop(attn)
@@ -137,8 +156,23 @@ class CrossAttention(nn.Module):
 
 
 class AttentiveBlock(nn.Module):
-
-
+    r"""Attentive Block
+    Args:
+        dim (int): Number of input channels.
+        num_heads (int): Number of attention heads. Default: 8
+        qkv_bias (bool, optional):  If True, add a learnable bias to q, k, v.
+            Default: False.
+        qk_scale (float | None, optional): Override default qk scale of
+            head_dim ** -0.5 if set. Default: None.
+        drop (float, optional): Dropout rate. Default: 0.0.
+        attn_drop (float, optional): Attention dropout rate. Default: 0.0.
+        drop_path (float | tuple[float], optional): Stochastic depth rate.
+            Default: 0.0.
+        norm_layer (nn.Module, optional): Normalization layer.  Default: nn.LayerNorm.
+        attn_head_dim (int, optional): Dimension of attention head. Default: None.
+        out_dim (int, optional): Dimension of output. Default: None.
+    """
+    
     def __init__(self,
                  dim,
                  num_heads,
@@ -197,7 +231,13 @@ class AttentionPoolingBlock(AttentiveBlock):
 
 
 class StemLayer(nn.Module):
-
+    r""" Stem layer of InternImage
+    Args:
+        in_chans (int): number of input channels
+        out_chans (int): number of output channels
+        act_layer (str): activation layer
+        norm_layer (str): normalization layer
+    """
 
     def __init__(self,
                  in_chans=3,
@@ -231,7 +271,11 @@ class StemLayer(nn.Module):
 
 
 class DownsampleLayer(nn.Module):
-
+    r""" Downsample layer of InternImage
+    Args:
+        channels (int): number of input channels
+        norm_layer (str): normalization layer
+    """
 
     def __init__(self, channels, norm_layer='LN'):
         super().__init__()
@@ -251,7 +295,14 @@ class DownsampleLayer(nn.Module):
 
 
 class MLPLayer(nn.Module):
-
+    r""" MLP layer of InternImage
+    Args:
+        in_features (int): number of input features
+        hidden_features (int): number of hidden features
+        out_features (int): number of output features
+        act_layer (str): activation layer
+        drop (float): dropout rate
+    """
 
     def __init__(self,
                  in_features,
@@ -277,7 +328,21 @@ class MLPLayer(nn.Module):
 
 
 class InternImageLayer(nn.Module):
-
+    r""" Basic layer of InternImage
+    Args:
+        core_op (nn.Module): core operation of InternImage
+        channels (int): number of input channels
+        groups (list): Groups of each block.
+        mlp_ratio (float): ratio of mlp hidden features to input channels
+        drop (float): dropout rate
+        drop_path (float): drop path rate
+        act_layer (str): activation layer
+        norm_layer (str): normalization layer
+        post_norm (bool): whether to use post normalization
+        layer_scale (float): layer scale
+        offset_scale (float): offset scale
+        with_cp (bool): whether to use checkpoint
+    """
 
     def __init__(self,
                  core_op,
@@ -292,10 +357,10 @@ class InternImageLayer(nn.Module):
                  layer_scale=None,
                  offset_scale=1.0,
                  with_cp=False,
-                 dw_kernel_size=None,
-                 res_post_norm=False,
-                 center_feature_scale=False,
-                 remove_center=False,
+                 dw_kernel_size=None, # for InternImage-H/G
+                 res_post_norm=False, # for InternImage-H/G
+                 center_feature_scale=False, # for InternImage-H/G
+                 remove_center=False,  # for InternImage-H/G
                  ):
         super().__init__()
         self.channels = channels
@@ -315,9 +380,9 @@ class InternImageLayer(nn.Module):
             offset_scale=offset_scale,
             act_layer=act_layer,
             norm_layer=norm_layer,
-            dw_kernel_size=dw_kernel_size,
-            center_feature_scale=center_feature_scale,
-            remove_center=remove_center,
+            dw_kernel_size=dw_kernel_size, # for InternImage-H/G
+            center_feature_scale=center_feature_scale, # for InternImage-H/G
+            remove_center=remove_center,  # for InternImage-H/G
         )
         self.drop_path = DropPath(drop_path) if drop_path > 0. \
             else nn.Identity()
@@ -344,7 +409,7 @@ class InternImageLayer(nn.Module):
                 if self.post_norm:
                     x = x + self.drop_path(self.norm1(self.dcn(x)))
                     x = x + self.drop_path(self.norm2(self.mlp(x)))
-                elif self.res_post_norm:
+                elif self.res_post_norm: # for InternImage-H/G
                     x = x + self.drop_path(self.res_post_norm1(self.dcn(self.norm1(x))))
                     x = x + self.drop_path(self.res_post_norm2(self.mlp(self.norm2(x))))
                 else:
@@ -367,7 +432,22 @@ class InternImageLayer(nn.Module):
 
 
 class InternImageBlock(nn.Module):
-
+    r""" Block of InternImage
+    Args:
+        core_op (nn.Module): core operation of InternImage
+        channels (int): number of input channels
+        depths (list): Depth of each block.
+        groups (list): Groups of each block.
+        mlp_ratio (float): ratio of mlp hidden features to input channels
+        drop (float): dropout rate
+        drop_path (float): drop path rate
+        act_layer (str): activation layer
+        norm_layer (str): normalization layer
+        post_norm (bool): whether to use post normalization
+        layer_scale (float): layer scale
+        offset_scale (float): offset scale
+        with_cp (bool): whether to use checkpoint
+    """
 
     def __init__(self,
                  core_op,
@@ -384,11 +464,11 @@ class InternImageBlock(nn.Module):
                  offset_scale=1.0,
                  layer_scale=None,
                  with_cp=False,
-                 dw_kernel_size=None,
-                 post_norm_block_ids=None,
-                 res_post_norm=False,
-                 center_feature_scale=False,
-                 remove_center=False,
+                 dw_kernel_size=None, # for InternImage-H/G
+                 post_norm_block_ids=None, # for InternImage-H/G
+                 res_post_norm=False, # for InternImage-H/G
+                 center_feature_scale=False, # for InternImage-H/G
+                 remove_center=False,  # for InternImage-H/G
                  ):
         super().__init__()
         self.channels = channels
@@ -411,16 +491,16 @@ class InternImageBlock(nn.Module):
                 layer_scale=layer_scale,
                 offset_scale=offset_scale,
                 with_cp=with_cp,
-                dw_kernel_size=dw_kernel_size,
-                res_post_norm=res_post_norm,
-                center_feature_scale=center_feature_scale,
-                remove_center = remove_center,
+                dw_kernel_size=dw_kernel_size, # for InternImage-H/G
+                res_post_norm=res_post_norm, # for InternImage-H/G
+                center_feature_scale=center_feature_scale, # for InternImage-H/G
+                remove_center = remove_center,  # for InternImage-H/G
         ) for i in range(depth)
         ])
         if not self.post_norm or center_feature_scale:
             self.norm = build_norm_layer(channels, 'LN')
         self.post_norm_block_ids = post_norm_block_ids
-        if post_norm_block_ids is not None:
+        if post_norm_block_ids is not None: # for InternImage-H/G
             self.post_norms = nn.ModuleList(
                 [build_norm_layer(channels, 'LN', eps=1e-6) for _ in post_norm_block_ids]
             )
@@ -432,7 +512,7 @@ class InternImageBlock(nn.Module):
             x = blk(x)
             if (self.post_norm_block_ids is not None) and (i in self.post_norm_block_ids):
                 index = self.post_norm_block_ids.index(i)
-                x = self.post_norms[index](x)
+                x = self.post_norms[index](x) # for InternImage-H/G
         if not self.post_norm or self.center_feature_scale:
             x = self.norm(x)
         if return_wo_downsample:
@@ -446,7 +526,30 @@ class InternImageBlock(nn.Module):
 
 
 class InternImage(nn.Module):
-
+    r""" InternImage
+        A PyTorch impl of : `InternImage: Exploring Large-Scale Vision Foundation Models with Deformable Convolutions`  -
+          https://arxiv.org/pdf/2103.14030
+    Args:
+        core_op (str): Core operator. Default: 'DCNv3'
+        channels (int): Number of the first stage. Default: 64
+        depths (list): Depth of each block. Default: [3, 4, 18, 5]
+        groups (list): Groups of each block. Default: [3, 6, 12, 24]
+        num_classes (int): Number of classes. Default: 1000
+        mlp_ratio (float): Ratio of mlp hidden dim to embedding dim. Default: 4.
+        drop_rate (float): Probability of an element to be zeroed. Default: 0.
+        drop_path_rate (float): Stochastic depth rate. Default: 0.
+        act_layer (str): Activation layer. Default: 'GELU'
+        norm_layer (str): Normalization layer. Default: 'LN'
+        layer_scale (bool): Whether to use layer scale. Default: False
+        cls_scale (bool): Whether to use class scale. Default: False
+        with_cp (bool): Use checkpoint or not. Using checkpoint will save some
+        dw_kernel_size (int): Size of the dwconv. Default: None
+        use_clip_projector (bool): Whether to use clip projector. Default: False
+        level2_post_norm (bool): Whether to use level2 post norm. Default: False
+        level2_post_norm_block_ids (list): Indexes of post norm blocks. Default: None
+        res_post_norm (bool): Whether to use res post norm. Default: False
+        center_feature_scale (bool): Whether to use center feature scale. Default: False
+    """
 
     def __init__(self,
                  core_op='DCNv3',
@@ -466,13 +569,13 @@ class InternImage(nn.Module):
                  post_norm=False,
                  cls_scale=1.5,
                  with_cp=False,
-                 dw_kernel_size=None,
-                 use_clip_projector=False,
-                 level2_post_norm=False,
-                 level2_post_norm_block_ids=None,
-                 res_post_norm=False,
-                 center_feature_scale=False,
-                 remove_center=False,
+                 dw_kernel_size=None, # for InternImage-H/G
+                 use_clip_projector=False, # for InternImage-H/G
+                 level2_post_norm=False, # for InternImage-H/G
+                 level2_post_norm_block_ids=None, # for InternImage-H/G
+                 res_post_norm=False, # for InternImage-H/G
+                 center_feature_scale=False, # for InternImage-H/G
+                 remove_center=False, # for InternImage-H/G
                  **kwargs):
         super().__init__()
         self.core_op = core_op
@@ -512,7 +615,7 @@ class InternImage(nn.Module):
         self.levels = nn.ModuleList()
         for i in range(self.num_levels):
             post_norm_block_ids = level2_post_norm_block_ids if level2_post_norm and (
-                i == 2) else None
+                i == 2) else None # for InternImage-H/G
             level = InternImageBlock(
                 core_op=getattr(opsm, core_op),
                 channels=int(channels * 2**i),
@@ -528,15 +631,15 @@ class InternImage(nn.Module):
                 layer_scale=layer_scale,
                 offset_scale=offset_scale,
                 with_cp=with_cp,
-                dw_kernel_size=dw_kernel_size,
-                post_norm_block_ids=post_norm_block_ids,
-                res_post_norm=res_post_norm,
-                center_feature_scale=center_feature_scale,
-                remove_center=remove_center,
+                dw_kernel_size=dw_kernel_size,  # for InternImage-H/G
+                post_norm_block_ids=post_norm_block_ids, # for InternImage-H/G
+                res_post_norm=res_post_norm, # for InternImage-H/G
+                center_feature_scale=center_feature_scale, # for InternImage-H/G
+                remove_center=remove_center,  # for InternImage-H/G
             )
             self.levels.append(level)
-
-        if not use_clip_projector:
+        
+        if not use_clip_projector: # for InternImage-T/S/B/L/XL
             self.conv_head = nn.Sequential(
                 nn.Conv2d(self.num_features,
                           int(self.num_features * cls_scale),
@@ -547,7 +650,7 @@ class InternImage(nn.Module):
                 build_act_layer(act_layer))
             self.head = nn.Linear(int(self.num_features * cls_scale), num_classes) \
                 if num_classes > 0 else nn.Identity()
-        else:
+        else: # for InternImage-H/G
             pretrain_embed_dim, _stride, attnpool_num_heads, clip_embed_dim = 1024, 2, 16, 768
             self.dcnv3_head_x4 = nn.Sequential(
                 nn.Conv2d(in_channels=self.num_features,
@@ -568,7 +671,7 @@ class InternImage(nn.Module):
             self.fc_norm = build_norm_layer(clip_embed_dim, norm_layer, eps=1e-6)
             self.head = nn.Linear(
                 clip_embed_dim, num_classes) if num_classes > 0 else nn.Identity()
-
+            
         self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
         self.num_layers = len(depths)
         self.apply(self._init_weights)
@@ -591,25 +694,25 @@ class InternImage(nn.Module):
     def lr_decay_keywards(self, decay_ratio=0.87):
         lr_ratios = {}
 
-
+        # blocks
         idx = 0
         for i in range(4):
-            layer_num = 3 - i
+            layer_num = 3 - i  # 3 2 1 0
             for j in range(self.depths[layer_num]):
                 block_num = self.depths[layer_num] - j - 1
                 tag = 'levels.{}.blocks.{}.'.format(layer_num, block_num)
                 decay = 1.0 * (decay_ratio**idx)
                 lr_ratios[tag] = decay
                 idx += 1
-
+        # patch_embed (before stage-1)
         lr_ratios["patch_embed"] = lr_ratios['levels.0.blocks.0.']
-
+        # levels.0.downsample (between stage-1 and stage-2)
         lr_ratios["levels.0.downsample"] = lr_ratios['levels.1.blocks.0.']
         lr_ratios["levels.0.norm"] = lr_ratios['levels.1.blocks.0.']
-
+        # levels.1.downsample (between stage-2 and stage-3)
         lr_ratios["levels.1.downsample"] = lr_ratios['levels.2.blocks.0.']
         lr_ratios["levels.1.norm"] = lr_ratios['levels.2.blocks.0.']
-
+        # levels.2.downsample (between stage-3 and stage-4)
         lr_ratios["levels.2.downsample"] = lr_ratios['levels.3.blocks.0.']
         lr_ratios["levels.2.norm"] = lr_ratios['levels.3.blocks.0.']
         return lr_ratios
@@ -630,7 +733,9 @@ class InternImage(nn.Module):
         '''for level in self.levels:
             x = level(x)'''
 
-
+        #x = self.conv_head(x.permute(0, 3, 1, 2))
+        #x = self.avgpool(x)
+        #x = torch.flatten(x, 1)
         return x
 
     def forward_features_seq_out(self, x):
@@ -642,15 +747,15 @@ class InternImage(nn.Module):
             x, x_ = level(x, return_wo_downsample=True)
             seq_out.append(x_)
         return seq_out
-
-    def forward_clip_projector(self, x):
+    
+    def forward_clip_projector(self, x): # for InternImage-H/G
         xs = self.forward_features_seq_out(x)
         x1, x2, x3, x4 = xs
-
-        x1 = x1.permute(0, 3, 1, 2)
-        x2 = x2.permute(0, 3, 1, 2)
-        x3 = x3.permute(0, 3, 1, 2)
-        x4 = x4.permute(0, 3, 1, 2)
+        
+        x1 = x1.permute(0, 3, 1, 2) # NHWC -> NCHW
+        x2 = x2.permute(0, 3, 1, 2) # NHWC -> NCHW
+        x3 = x3.permute(0, 3, 1, 2) # NHWC -> NCHW
+        x4 = x4.permute(0, 3, 1, 2) # NHWC -> NCHW
 
         x4 = self.dcnv3_head_x4(x4)
         x = x4
@@ -660,13 +765,13 @@ class InternImage(nn.Module):
         x = x.flatten(-2).transpose(1, 2).contiguous()
         x = self.clip_projector(x)
         x = self.fc_norm(x)
-
+        
         return x
-
+    
     def forward(self, x):
-        if self.use_clip_projector:
+        if self.use_clip_projector: # for InternImage-H/G
             x = self.forward_clip_projector(x)
-        else:
+        else: # for InternImage-T/S/B/L/XL
             x = self.forward_features(x)
-
+        #x = self.head(x)
         return x

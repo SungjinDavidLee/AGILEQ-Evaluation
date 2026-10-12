@@ -1,3 +1,9 @@
+# --------------------------------------------------------
+# InternImage
+# Copyright (c) 2022 OpenGVLab
+# Licensed under The MIT License [see LICENSE for details]
+# --------------------------------------------------------
+
 from __future__ import absolute_import
 from __future__ import print_function
 from __future__ import division
@@ -98,14 +104,25 @@ class DCNv3_pytorch(nn.Module):
             center_feature_scale=False,
             remove_center=False,
     ):
-
+        """
+        DCNv3 Module
+        :param channels
+        :param kernel_size
+        :param stride
+        :param pad
+        :param dilation
+        :param group
+        :param offset_scale
+        :param act_layer
+        :param norm_layer
+        """
         super().__init__()
         if channels % group != 0:
             raise ValueError(
                 f'channels must be divisible by group, but got {channels} and {group}')
         _d_per_group = channels // group
         dw_kernel_size = dw_kernel_size if dw_kernel_size is not None else kernel_size
-
+        # you'd better set _d_per_group to a power of 2 which is more efficient in our CUDA implementation
         if not _is_power_of_2(_d_per_group):
             warnings.warn(
                 "You'd better set channels in DCNv3 to make the dimension of each attention head a power of 2 "
@@ -147,7 +164,7 @@ class DCNv3_pytorch(nn.Module):
         self.input_proj = nn.Linear(channels, channels)
         self.output_proj = nn.Linear(channels, channels)
         self._reset_parameters()
-
+        
         if center_feature_scale:
             self.center_feature_scale_proj_weight = nn.Parameter(
                 torch.zeros((group, channels), dtype=torch.float))
@@ -166,7 +183,10 @@ class DCNv3_pytorch(nn.Module):
         constant_(self.output_proj.bias.data, 0.)
 
     def forward(self, input):
-
+        """
+        :param query                       (N, H, W, C)
+        :return output                     (N, H, W, C)
+        """
         N, H, W, _ = input.shape
 
         x = self.input_proj(input)
@@ -189,7 +209,7 @@ class DCNv3_pytorch(nn.Module):
         if self.center_feature_scale:
             center_feature_scale = self.center_feature_scale_module(
                 x1, self.center_feature_scale_proj_weight, self.center_feature_scale_proj_bias)
-
+            # N, H, W, groups -> N, H, W, groups, 1 -> N, H, W, groups, _d_per_group -> N, H, W, channels
             center_feature_scale = center_feature_scale[..., None].repeat(
                 1, 1, 1, 1, self.channels // self.group).flatten(-2)
             x = x * (1 - center_feature_scale) + x_proj * center_feature_scale
@@ -214,14 +234,25 @@ class DCNv3(nn.Module):
         center_feature_scale=False,
         remove_center=False,
     ):
-
+        """
+        DCNv3 Module
+        :param channels
+        :param kernel_size
+        :param stride
+        :param pad
+        :param dilation
+        :param group
+        :param offset_scale
+        :param act_layer
+        :param norm_layer
+        """
         super().__init__()
         if channels % group != 0:
             raise ValueError(
                 f'channels must be divisible by group, but got {channels} and {group}')
         _d_per_group = channels // group
         dw_kernel_size = dw_kernel_size if dw_kernel_size is not None else kernel_size
-
+        # you'd better set _d_per_group to a power of 2 which is more efficient in our CUDA implementation
         if not _is_power_of_2(_d_per_group):
             warnings.warn(
                 "You'd better set channels in DCNv3 to make the dimension of each attention head a power of 2 "
@@ -266,7 +297,7 @@ class DCNv3(nn.Module):
         self.input_proj = nn.Linear(channels, channels)
         self.output_proj = nn.Linear(channels, channels)
         self._reset_parameters()
-
+        
         if center_feature_scale:
             self.center_feature_scale_proj_weight = nn.Parameter(
                 torch.zeros((group, channels), dtype=torch.float))
@@ -285,7 +316,10 @@ class DCNv3(nn.Module):
         constant_(self.output_proj.bias.data, 0.)
 
     def forward(self, input):
-
+        """
+        :param query                       (N, H, W, C)
+        :return output                     (N, H, W, C)
+        """
         N, H, W, _ = input.shape
 
         x = self.input_proj(input)
@@ -298,7 +332,7 @@ class DCNv3(nn.Module):
         mask = self.mask(x1).reshape(N, H, W, self.group, -1)
         mask = F.softmax(mask, -1)
         mask = mask.reshape(N, H, W, -1).type(dtype)
-
+        
         x = DCNv3Function.apply(
             x, offset, mask,
             self.kernel_size, self.kernel_size,
@@ -309,11 +343,11 @@ class DCNv3(nn.Module):
             self.offset_scale,
             256,
             self.remove_center)
-
+        
         if self.center_feature_scale:
             center_feature_scale = self.center_feature_scale_module(
                 x1, self.center_feature_scale_proj_weight, self.center_feature_scale_proj_bias)
-
+            # N, H, W, groups -> N, H, W, groups, 1 -> N, H, W, groups, _d_per_group -> N, H, W, channels
             center_feature_scale = center_feature_scale[..., None].repeat(
                 1, 1, 1, 1, self.channels // self.group).flatten(-2)
             x = x * (1 - center_feature_scale) + x_proj * center_feature_scale

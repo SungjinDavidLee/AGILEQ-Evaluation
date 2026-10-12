@@ -14,40 +14,40 @@ class XtMaCombinedExtractor(BaseFeaturesExtractor):
     def __init__(self, observation_space: gym.spaces.Dict, features_dim=256):
         super().__init__(observation_space, features_dim=features_dim)
 
-
+        # token embedding dim
         self.d_token = 128
 
         n_input_channels = observation_space['bev_image'].shape[0]
 
-        self.cnn = nn.Sequential(
-
-            nn.Conv2d(n_input_channels, 8, kernel_size=5, stride=2),
+        self.cnn = nn.Sequential(   # input : (N, C, 196, 196)
+            # Layer 1: (196 - 5) / 2 + 1 = 96
+            nn.Conv2d(n_input_channels, 8, kernel_size=5, stride=2), # (8, 96, 96)
             nn.ReLU(),
-
-
-            nn.Conv2d(8, 16, kernel_size=5, stride=2),
+            
+            # Layer 2: (96 - 5) / 2 + 1 = 46
+            nn.Conv2d(8, 16, kernel_size=5, stride=2), # (16, 46, 46)
             nn.ReLU(),
-
-
-            nn.Conv2d(16, 16, kernel_size=5, stride=2),
+            
+            # Layer 3: (46 - 5) / 2 + 1 = 21
+            nn.Conv2d(16, 16, kernel_size=5, stride=2), # (16, 21, 21)
             nn.ReLU(),
-
-
-            nn.Conv2d(16, 32, kernel_size=3, stride=2),
+            
+            # Layer 4: (21 - 3) / 2 + 1 = 10
+            nn.Conv2d(16, 32, kernel_size=3, stride=2), # (32, 10, 10)
             nn.ReLU(),
-
-
-            nn.Conv2d(32, 32, kernel_size=3, stride=1),
+            
+            # Layer 5: (10 - 3) / 1 + 1 = 8
+            nn.Conv2d(32, 32, kernel_size=3, stride=1), # (32, 8, 8)
             nn.ReLU(),
-
-
-            nn.Conv2d(32, 64, kernel_size=3, stride=2),
+            
+            # Layer 6: (8 - 3) / 2 + 1 = 3
+            nn.Conv2d(32, 64, kernel_size=3, stride=2), # (64, 3, 3)
             nn.ReLU(),
-
-
-            nn.Conv2d(64, 128, kernel_size=3, stride=1),
-
-            nn.Flatten(),
+            
+            # Layer 7: (3 - 3) / 1 + 1 = 1
+            nn.Conv2d(64, 128, kernel_size=3, stride=1), # (128, 1, 1)
+            
+            nn.Flatten(), # 128 * 1 * 1 = 128
             nn.LayerNorm(self.d_token)
         )
 
@@ -57,28 +57,28 @@ class XtMaCombinedExtractor(BaseFeaturesExtractor):
             self.cnn_output_dim = cnn_out.shape[1]
             if self.cnn_output_dim != self.d_token:
                 raise ValueError(f"CNN output dim({self.cnn_output_dim}) != d_model({self.d_token}). Check CNN architecture.")
-
+            
         self.n_ego = observation_space['vehicle_measures'].shape[0] - 29
 
-
+        # Token A : Ego state - Steer, Throttle, Brake, Speed, Jerk, speed_dev
         self.embed_ego = nn.Sequential(
             nn.Linear(self.n_ego, self.d_token),
             nn.LayerNorm(self.d_token)
         )
 
-
+        # Token D : Traffic Light - One hot vector (4) + stop line dist (1)
         self.embed_traffic = nn.Sequential(
             nn.Linear(5, self.d_token),
             nn.LayerNorm(self.d_token)
         )
 
-
+        # Token C : waypoints - 7 points * 2 coords = 14
         self.embed_wp = nn.Sequential(
             nn.Linear(14, self.d_token),
             nn.LayerNorm(self.d_token)
         )
 
-
+        # Token E : Previous state - prev control (3) + prev speed (1) + prev jerk (1) + prev TL (4) + prev stop line dist (1)
         self.embed_prev = nn.Sequential(
             nn.Linear(10, self.d_token),
             nn.LayerNorm(self.d_token)
@@ -93,31 +93,37 @@ class XtMaCombinedExtractor(BaseFeaturesExtractor):
             batch_first = True,
             norm_first = True,
         )
-        self.Transformer = nn.TransformerEncoder(encoder_layer, num_layers=1)
+        self.Transformer = nn.TransformerEncoder(encoder_layer, num_layers=2)
 
     def forward(self, observations):
         measures = observations['vehicle_measures']
 
         bev_data = self.cnn(observations['bev_image'])
 
-
+        # Token A: Ego
+        # steer, throttle, brake, speed, jerk
         ego_data = measures[:, 0:self.n_ego]
 
-
+        # Token D: Traffic / Rule
+        # traffic_light_state(4), stop_line(1)
         traffic_data = measures[:, self.n_ego:self.n_ego + 5]
 
-
+        # Token C: Waypoints
+        # 7 * 2 = 14
         waypoint_data = measures[:, self.n_ego + 5:self.n_ego + 19]
 
-
+        # Token E: Previous
+        # prev ego_data (5) + prev tl(4) + prev stop line(1)
         prev_data = measures[:, self.n_ego + 19:self.n_ego + 29]
-
-
+                    
+        # Embedding & Unsqueeze -> (Batch, 1, 128)
+        
         token_a = self.embed_ego(ego_data).unsqueeze(1)
         token_d = self.embed_traffic(traffic_data).unsqueeze(1)
         token_c = self.embed_wp(waypoint_data).unsqueeze(1)
         token_e = self.embed_prev(prev_data).unsqueeze(1)
         token_b = bev_data.unsqueeze(1)
+        
 
 
         x = th.cat([token_a, token_b, token_c, token_d, token_e], dim=1)
@@ -125,6 +131,8 @@ class XtMaCombinedExtractor(BaseFeaturesExtractor):
         x = x.flatten(start_dim = 1)
 
         return x
+
+
 
 
 policy_kwargs = dict(
@@ -145,6 +153,8 @@ policy_kwargs_AdamW = dict(
 )
 
 
+
+
 algorithm_params = {
     "PPO": dict(
         learning_rate=lr_schedule(5e-4, 1e-6, 2),
@@ -155,7 +165,7 @@ algorithm_params = {
         ent_coef=0.05,
         n_epochs=10,
         n_steps=1024,
-        policy_kwargs=policy_kwargs,
+        policy_kwargs=policy_kwargs,  
     ),
     "SAC": dict(
         learning_rate=lr_schedule(5e-4, 1e-6, 2),
@@ -168,7 +178,7 @@ algorithm_params = {
         gradient_steps=64,
         learning_starts=10000,
         use_sde=True,
-        policy_kwargs=policy_kwargs,
+        policy_kwargs=policy_kwargs,  
     ),
     "DDPG": dict(
         gamma=0.99,
@@ -177,7 +187,7 @@ algorithm_params = {
         action_noise=NormalActionNoise(mean=np.zeros(2), sigma=0.5 * np.ones(2)),
         gradient_steps=-1,
         learning_rate=lr_schedule(5e-4, 1e-6, 2),
-        policy_kwargs=policy_kwargs,
+        policy_kwargs=policy_kwargs,  
     ),
     "TD3": dict(
         gamma=0.99,
@@ -188,9 +198,9 @@ algorithm_params = {
         train_freq=64,
         gradient_steps=-1,
         learning_rate=lr_schedule(5e-4, 1e-6, 2),
-        policy_kwargs=policy_kwargs,
+        policy_kwargs=policy_kwargs,  
     ),
-
+    
     "TQC": dict(
         learning_rate=lr_schedule(5e-4, 1e-6, 2),
         buffer_size=30000,
@@ -202,34 +212,34 @@ algorithm_params = {
         learning_starts=10000,
         train_freq=64,
         use_sde=True,
-        policy_kwargs=policy_kwargs,
+        policy_kwargs=policy_kwargs,  
     ),
 
     "crossq": dict(
         learning_rate=3e-4,
         buffer_size=35000,
         batch_size=256,
-        ent_coef="auto",
+        ent_coef="auto",  # automatic entropy tuning
         gamma=0.98,
         train_freq=(64,"step"),
         gradient_steps=64,
         learning_starts=10000,
         use_sde=True,
-        policy_kwargs=policy_kwargs,
+        policy_kwargs=policy_kwargs, 
     ),
 
     "crossq_pp": dict(
         learning_rate=3e-4,
         buffer_size=35000,
         batch_size=512,
-        tau = 1.0,
-        ent_coef="auto",
+        tau = 1.0, # tau = 1.0 is equivalent to having no target network
+        ent_coef="auto",  # automatic entropy tuning
         gamma=0.98,
         train_freq=(64,"step"),
         gradient_steps=64,
         learning_starts=10000,
         use_sde=True,
-        policy_kwargs=policy_kwargs_AdamW,
+        policy_kwargs=policy_kwargs_AdamW, 
         reset_interval=200_000,
         reset_critic = False,
         reset_actor=False,
@@ -239,17 +249,17 @@ algorithm_params = {
 }
 
 states = {
-    "test": ["steer", "throttle", "brake", "speed", "bev_image", "traffic_light_state", "jerk", "waypoints", "previous_state", "stop_line", "right_turn_indicator"],
+    "test": ["steer", "throttle", "brake", "speed", "bev_image", "traffic_light_state", "jerk", "waypoints", "previous_state", "stop_line", "right_turn_indicator", "bypass_indicator"],
     "2": ["steer", "throttle", "speed", "maneuver"],
 }
 
 reward_params = {
     "reward_params": dict(
         early_stop=True,
-        min_speed=20.0,
-        max_speed=40.0,
-        target_speed=30.0,
-        max_distance=1.8,
+        min_speed=20.0,  # km/h
+        max_speed=40.0,  # km/h
+        target_speed=30.0,  # kmh
+        max_distance=2.0,  # Max distance from center before terminating
         max_std_center_lane=0.35,
         max_angle_center_lane=90,
         max_jerk=30,

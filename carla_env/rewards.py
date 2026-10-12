@@ -21,9 +21,10 @@ W_SPEED = 0.6
 W_LANE = 0.35
 W_JERK = 0.05
 
-SAFE_DISTANCE = 20.1
-SAFE_TTC = 3.0
-SPEED_DIFF_MAX = 10.0
+D_MAXNPC_MIN = 9.0  # m, D_maxnpc = max(D_MAXNPC_MIN, NPC_HEADWAY_S * V_ego); centre distance (bumper gap ~4 m)
+NPC_HEADWAY_S = 2.0  # s
+SAFE_TTC = 3.0 # Pedestrian
+SPEED_DIFF_MAX = 10.0 # ego speed - npc speed
 STOP_DISTANCE = 20.1
 
 low_speed_timer = 0
@@ -36,21 +37,20 @@ def create_reward_fn(reward_fn):
     def func(env):
         terminal_reason = "Running..."
         if early_stop:
-
+            # Stop if speed is less than 1.0 km/h after the first 5s of an episode
             global low_speed_timer, obstacle_safe_timer
-            low_speed_timer += 1.0 / env.fps
+            low_speed_timer += 1.0 / env.fps     
             env.episode_timer += 1.0 / env.fps
 
             red_light_violation, distance_stop_line = env.run_red_light.tick(env.vehicle)
             traffic = env.traffic_light_handler.get_light_state(env.vehicle)
             npc_vehicle, npc_distance, npc_speed_ms = env._is_vehicle_hazard()
             closest_walker, distance_walker = env._get_closest_hazardous_walker_v2()
-            green_target_speed = env.get_dynamic_target_speed() if env.get_dynamic_target_speed() is not None else target_speed
             red_light_stop = traffic[0] == carla.TrafficLightState.Red and not env.right_turn_indicator
 
-            is_justified_to_stop = (red_light_stop or
-                                    npc_vehicle or
-                                    closest_walker or
+            is_justified_to_stop = (red_light_stop or 
+                                    npc_vehicle or 
+                                    closest_walker or 
                                     traffic[0] == carla.TrafficLightState.Yellow)
 
             if is_justified_to_stop:
@@ -59,7 +59,7 @@ def create_reward_fn(reward_fn):
                 if env.speed < 1.0 and low_speed_timer > 10.0:
                     env.episode_timer += 1.0 / env.fps
 
-
+            # ================== safe timer ================ #
             if env.speed < 1.0 and is_justified_to_stop:
                 obstacle_safe_timer += 1.0 / env.fps
             else:
@@ -90,18 +90,17 @@ def create_reward_fn(reward_fn):
                 terminal_reason = "scenario_timeout"
                 env._record_infraction('scenario_timeout')
 
-
+            
         reward = 0
-        reward += reward_fn(env,
-                            npc_vehicle,
-                            npc_distance,
-                            traffic,
-                            distance_stop_line,
-                            closest_walker,
+        reward += reward_fn(env, 
+                            npc_vehicle, 
+                            npc_distance, 
+                            traffic, 
+                            distance_stop_line,  
+                            closest_walker, 
                             distance_walker,
-                            green_target_speed,
                             npc_speed_ms)
-
+                            
         if env.terminal_state:
             if env.safe_timeout:
                 pass
@@ -117,14 +116,14 @@ def create_reward_fn(reward_fn):
             obstacle_safe_timer = 0.0
             print(f"{env.episode_idx}| Terminal: ", terminal_reason)
 
-
+        
         if terminal_reason in env.terminal_reason_counter:
             env.terminal_reason_counter[terminal_reason] += 1
         elif terminal_reason == "Safe Timeout (Obstacle)":
-            env.terminal_reason_counter["Safe time obstacle"] += 1
+            env.terminal_reason_counter["Safe time obstacle"] += 1 
         else:
             env.terminal_reason_counter["Other"] += 1
-
+        
         if env.success_state:
             print(f"{env.episode_idx}| Success")
             env.terminal_state = True
@@ -132,34 +131,37 @@ def create_reward_fn(reward_fn):
             obstacle_safe_timer = 0.0
             if hasattr(env, "terminal_reason_counter"):
                 env.terminal_reason_counter["Success"] += 1
-
+        
         return reward, is_justified_to_stop
     return func
 
-
-def reward_fn5(env,
-               npc_vehicle,
-               npc_distance,
-               traffic,
-               distance_stop_line,
-               closest_walker,
+# Reward_fn5
+def reward_fn5(env, 
+               npc_vehicle, 
+               npc_distance, 
+               traffic, 
+               distance_stop_line, 
+               closest_walker, 
                distance_walker,
                npc_speed_ms):
-
+    
     speed_ms = env.speed / 3.6
     stop_penalty = 0.0
     red_light_stop = traffic[0] == carla.TrafficLightState.Red and not env.right_turn_indicator
 
     is_obstacle_present = (closest_walker or
                         npc_vehicle or
-                        red_light_stop or
+                        red_light_stop or   
                         traffic[0] == carla.TrafficLightState.Yellow)
+    
+    # ================================ Safe Vehicle and Pedestrian ============================================== #
 
+    
 
     if is_obstacle_present:
         constraint_speed_rewards = []
 
-
+        # 1. Pedestrian TTC
         if closest_walker and distance_walker is not None:
 
             ego_speed_ms = max(speed_ms, 1e-3)
@@ -168,12 +170,12 @@ def reward_fn5(env,
             walker_reward = np.clip(ttc / SAFE_TTC, 0.0, 1.0)
             constraint_speed_rewards.append(walker_reward)
 
-
+        # 2. vehicle TTC
         if npc_vehicle and npc_distance is not None:
 
-
-            norm_distance = np.clip(npc_distance / SAFE_DISTANCE, 0.0, 1.0)
-
+            # distance term
+            d_max = max(D_MAXNPC_MIN, NPC_HEADWAY_S * speed_ms)
+            norm_distance = np.clip(npc_distance / d_max, 0.0, 1.0)
 
             if npc_speed_ms is not None:
                 speed_diff = abs(speed_ms - npc_speed_ms)
@@ -181,30 +183,31 @@ def reward_fn5(env,
             else:
                 norm_speed = 1.0
 
-            w_distance = 0.4
-            w_speed = 0.6
+            w_distance = 0.5
+            w_speed = 0.5
 
             vehicle_reward = (w_distance * norm_distance) + (w_speed * norm_speed)
             constraint_speed_rewards.append(vehicle_reward)
 
-
+    
+        # 3. red light, yellow light
         if red_light_stop or traffic[0] == carla.TrafficLightState.Yellow:
             norm_distance = np.clip(1.0 - distance_stop_line / STOP_DISTANCE, 0.0, 1.0)
             norm_speed = np.clip(1.0 / (1.0 + speed_ms), 0.0, 1.0)
 
-            w_distance = 0.5
-            w_speed = 0.5
+            w_distance = 0.4
+            w_speed = 0.6
 
             red_reward = (w_distance * norm_distance) + (w_speed * norm_speed)
             constraint_speed_rewards.append(red_reward)
 
         if traffic[0] == carla.TrafficLightState.Yellow:
-            yellow_reward = 1 - (env.speed / min_speed)
+            yellow_reward = max(0.0, 1 - (env.speed / min_speed))
             constraint_speed_rewards.append(yellow_reward)
 
         speed_reward = min(constraint_speed_rewards)
 
-
+    # Green light or None
     else:
         if env.speed < min_speed:
             speed_reward = env.speed / min_speed
@@ -212,16 +215,23 @@ def reward_fn5(env,
             speed_reward = 1.0 - (env.speed - target_speed) / (max_speed - target_speed)
         else:
             speed_reward = 1.0
+      
+            
 
 
+    # ========================================== jerk Reward ==================================================== #
+    
     jerk_penalty_factor = (env.current_jerk / max_jerk) **2
     jerk_penalty = min(jerk_penalty_factor, 1.0)
     jerk_reward = 1.0 - jerk_penalty
+    
 
 
+    # ================================== Maintenance Center Line Reward ========================================= #
+    # Interpolated from 1 when centered to 0 at max_distance from center
     centering_factor = max(1.0 - env.distance_from_center / max_distance, 0.0)
 
-
+    # Interpolated from 1 when aligned with the road to 0 at +/- max_angle_center_lane degrees
     angle_factor = max(1.0 - abs(env.angle / np.deg2rad(max_angle_center_lane)), 0.0)
 
     std = np.std(env.distance_from_center_history)
@@ -231,14 +241,23 @@ def reward_fn5(env,
 
     lane_reward = centering_factor * angle_factor * distance_std_factor * heading_angle_factor
 
-
+    # Final reward
     reward = ((W_SPEED * speed_reward) +
               (W_LANE * lane_reward) +
               (W_JERK * jerk_reward))
-
+    
     reward += stop_penalty
-
+    
 
     return reward
 
 reward_functions["reward_fn5"] = create_reward_fn(reward_fn5)
+
+
+
+
+
+
+
+
+

@@ -42,7 +42,9 @@ class VideoRecorder():
 
 class HParamCallback(BaseCallback):
     def __init__(self, config):
-
+        """
+        Saves the hyperparameters and metrics at the start of the training, and logs them to TensorBoard.
+        """
         super().__init__()
         self.config = config
 
@@ -58,8 +60,8 @@ class HParamCallback(BaseCallback):
                 hparam_dict[k] = str(hparam_dict[k])
             else:
                 hparam_dict[k] = v.__str__()
-
-
+        # define the metrics that will appear in the `HPARAMS` Tensorboard tab by referencing their tag
+        # Tensorboard will find & display metrics from the `SCALARS` tab
         metric_dict = {
             "rollout/ep_len_mean": 0,
             "train/value_loss": 0,
@@ -75,13 +77,15 @@ class HParamCallback(BaseCallback):
 
 
 class TensorboardCallback(BaseCallback):
-
+    """
+    Custom callback for plotting additional values in tensorboard.
+    """
 
     def __init__(self, verbose=0):
         super().__init__(verbose)
 
     def _on_step(self) -> bool:
-
+        # Log episode statistics at the end of each episode
         if self.locals['dones'][0]:
             self.logger.record("custom/total_reward", self.locals['infos'][0]['total_reward'])
             self.logger.record("custom/routes_completed", self.locals['infos'][0]['routes_completed'])
@@ -100,11 +104,11 @@ class VideoRecorderCallback(BaseCallback):
         self.skip_frame = skip_frame
 
     def _on_step(self) -> bool:
-
+        # Add frame to video
         if self.max_length != -1 and self.num_timesteps > self.max_length:
             self.video_recorder.release()
             return False
-
+        # Keep only every skip_frame-th frame to reduce video size
         if self.num_timesteps % self.skip_frame != 0:
             return True
         display = self.training_env.unwrapped.envs[0].env.display
@@ -118,10 +122,23 @@ class VideoRecorderCallback(BaseCallback):
 
 
 def lr_schedule(initial_value: float, end_value: float, rate: float):
+    """
+    Learning rate schedule:
+        Exponential decay by factors of 10 from initial_value to end_value.
 
+    :param initial_value: Initial learning rate.
+    :param rate: Exponential rate of decay. High values mean fast early drop in LR
+    :param end_value: The final value of the learning rate.
+    :return: schedule that computes current learning rate depending on remaining progress
+    """
 
     def func(progress_remaining: float) -> float:
+        """
+        Progress will decrease from 1 (beginning) to 0.
 
+        :param progress_remaining: A float value between 0 and 1 that represents the remaining progress.
+        :return: The current learning rate.
+        """
         if progress_remaining <= 0:
             return end_value
 
@@ -134,7 +151,13 @@ def lr_schedule(initial_value: float, end_value: float, rate: float):
 
 
 class HistoryWrapperObsDict(gym.Wrapper):
-
+    # History Wrapper from rl-baselines3-zoo
+    # https://github.com/DLR-RM/rl-baselines3-zoo/blob/10de3a8804b14b4ea605b487ae7d8117c52901c4/rl_zoo3/wrappers.py
+    """
+    History Wrapper for dict observation.
+    :param env:
+    :param horizon: Number of steps to keep in the history.
+    """
 
     def __init__(self, env: gym.Env, horizon: int = 2, obs_key: str = 'vae_latent') -> object:
         self.obs_key = obs_key
@@ -152,7 +175,7 @@ class HistoryWrapperObsDict(gym.Wrapper):
         low = np.concatenate((low_obs, low_action))
         high = np.concatenate((high_obs, high_action))
 
-
+        # Overwrite the observation space
         env.observation_space.spaces[obs_key] = gym.spaces.Box(low=low, high=high, dtype=wrapped_obs_space.dtype)
 
         super().__init__(env)
@@ -168,7 +191,7 @@ class HistoryWrapperObsDict(gym.Wrapper):
         return np.concatenate((self.obs_history, self.action_history))
 
     def reset(self):
-
+        # Flush the history
         self.obs_history[...] = 0
         self.action_history[...] = 0
         obs_dict = self.env.reset()
@@ -196,7 +219,11 @@ class HistoryWrapperObsDict(gym.Wrapper):
 
 
 class FrameSkip(gym.Wrapper):
-
+    """
+    Return only every ``skip``-th frame (frameskipping)
+    :param env: the environment
+    :param skip: number of ``skip``-th frame
+    """
 
     def __init__(self, env: gym.Env, skip: int = 4):
         super().__init__(env)
@@ -204,7 +231,12 @@ class FrameSkip(gym.Wrapper):
         self._skip = skip
 
     def step(self, action: np.ndarray):
-
+        """
+        Step the environment with the given action
+        Repeat action, sum reward.
+        :param action: the action
+        :return: observation, reward, done, information
+        """
         total_reward = 0.0
         done = None
         for _ in range(self._skip):
@@ -220,7 +252,12 @@ class FrameSkip(gym.Wrapper):
 
 
 def parse_wrapper_class(wrapper_class_str: str):
+    """
+    Parse a string to a wrapper class.
 
+    :param wrapper_class_str: (str) The string to parse.
+    :return: (type) The wrapper class and its parameters.
+    """
     wrap_class, wrap_params = wrapper_class_str.split("_", 1)
     wrap_params = wrap_params.split("_")
     wrap_params = [int(param) if param.isnumeric() else param for param in wrap_params]

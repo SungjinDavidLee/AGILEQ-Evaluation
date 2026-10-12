@@ -1,9 +1,13 @@
+# Source: https://github.com/carla-simulator/carla
+
 import os
 import numpy as np
 import carla
 import pygame
 
-
+# ==============================================================================
+# -- Constants -----------------------------------------------------------------
+# ==============================================================================
 COLOR_BUTTER_0 = pygame.Color(252, 233, 79)
 COLOR_BUTTER_1 = pygame.Color(237, 212, 0)
 COLOR_BUTTER_2 = pygame.Color(196, 160, 0)
@@ -60,7 +64,7 @@ class ModuleManager(object):
         del self.modules[:]
 
     def tick(self, clock):
-
+        # Update all the modules
         for module in self.modules:
             module.tick(clock)
 
@@ -116,18 +120,18 @@ class MapImage(object):
         self.lane_surface = self.big_lane_surface
 
     def draw_road_map(self, map_surface, lane_surface, carla_world, carla_map, world_to_pixel, world_to_pixel_width):
-
+        # map_surface.fill(COLOR_ALUMINIUM_4)
         map_surface.fill(COLOR_BLACK)
         precision = 0.05
 
         def draw_lane_marking(surface, points, solid=True):
             if solid and len(points) > 1:
-
+                # pygame.draw.lines(surface, COLOR_ORANGE_0, False, points, 2)
                 pygame.draw.lines(surface, COLOR_WHITE, False, points, 2)
             else:
                 broken_lines = [x for n, x in enumerate(zip(*(iter(points),) * 20)) if n % 3 == 0]
                 for line in broken_lines:
-
+                    # pygame.draw.lines(surface, COLOR_ORANGE_0, False, line, 2)
                     pygame.draw.lines(surface, COLOR_WHITE, False, line, 2)
 
         def draw_arrow(surface, transform, color=COLOR_ALUMINIUM_2):
@@ -157,16 +161,17 @@ class MapImage(object):
             offset = font_surface.get_rect(center=(pixel_pos[0], pixel_pos[1]))
             surface.blit(font_surface, offset)
 
-
+            # Draw line in front of stop
             forward_vector = carla.Location(waypoint.transform.get_forward_vector())
             left_vector = carla.Location(-forward_vector.y, forward_vector.x, forward_vector.z) * waypoint.lane_width/2 * 0.7
 
             line = [(waypoint.transform.location + (forward_vector * 1.5) + (left_vector)),
                     (waypoint.transform.location + (forward_vector * 1.5) - (left_vector))]
-
+            
             line_pixel = [world_to_pixel(p) for p in line]
             pygame.draw.lines(surface, color, True, line_pixel, 2)
 
+          
 
         def lateral_shift(transform, shift):
             transform.rotation.yaw += 90
@@ -181,7 +186,7 @@ class MapImage(object):
 
         topology = [x[0] for x in carla_map.get_topology()]
         topology = sorted(topology, key=lambda w: w.transform.location.z)
-
+    
         for waypoint in topology:
             waypoints = [waypoint]
             nxt = waypoint.next(precision)[0]
@@ -209,14 +214,23 @@ class MapImage(object):
                     lane_surface,
                     [world_to_pixel(x) for x in right_marking],
                     does_cross_solid_line(sample, sample.lane_width * 1.1))
-
-
+                    
+                # Dian: Do not draw them arrows
+                # for n, wp in enumerate(waypoints):
+                #     if (n % 400) == 0:
+                #         draw_arrow(map_surface, wp.transform)
+        
         actors = carla_world.get_actors()
         stops_transform = [actor.get_transform() for actor in actors if 'stop' in actor.type_id]
-        font_size = world_to_pixel_width(1)
+        font_size = world_to_pixel_width(1)            
         font = pygame.font.SysFont('Arial', font_size, True)
         font_surface = font.render("STOP", False, COLOR_ALUMINIUM_2)
         font_surface = pygame.transform.scale(font_surface, (font_surface.get_width(),font_surface.get_height() * 2))
+        
+        # Dian: do not draw stop sign
+        
+        # for stop in stops_transform:
+        #     draw_stop(map_surface,font_surface, stop)
 
 
     def world_to_pixel(self, location, offset=(0, 0)):
@@ -235,7 +249,9 @@ class MapImage(object):
 
 
 def encode_npy_to_pil(bev_array):
-
+    """
+        Encode BEV array with 15 channels to 3 channels -> each channel is rpresented by one bit.
+    """
 
     (channels, width, height) = (bev_array.shape[0], bev_array.shape[1], bev_array.shape[2])
 
@@ -244,13 +260,13 @@ def encode_npy_to_pil(bev_array):
 
     for i in range(channels):
         if i<=4 and i >= 0:
-
+            # Road, Lane, Lights
             img[0] = img[0] | (bev[i] << (8-i-1))
         elif i<=9 and i >= 5:
-
+            # Vehicle, Pedestrian
             img[1] = img[1] | (bev[i] << (8-(i-5)-1))
         elif i<=14 and i >= 10:
-
+            # Future vehicles
             img[2] = img[2] | (bev[i]<< (8-(i-10)-1))
 
     return img

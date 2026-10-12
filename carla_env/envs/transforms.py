@@ -3,7 +3,11 @@ import carla
 
 
 def loc_global_to_ref(target_loc_in_global, ref_trans_in_global):
-
+    """
+    :param target_loc_in_global: carla.Location in global coordinate (world, actor)
+    :param ref_trans_in_global: carla.Transform in global coordinate (world, actor)
+    :return: carla.Location in ref coordinate
+    """
     x = target_loc_in_global.x - ref_trans_in_global.location.x
     y = target_loc_in_global.y - ref_trans_in_global.location.y
     z = target_loc_in_global.z - ref_trans_in_global.location.z
@@ -15,7 +19,11 @@ def loc_global_to_ref(target_loc_in_global, ref_trans_in_global):
 
 
 def vec_global_to_ref(target_vec_in_global, ref_rot_in_global):
-
+    """
+    :param target_vec_in_global: carla.Vector3D in global coordinate (world, actor)
+    :param ref_rot_in_global: carla.Rotation in global coordinate (world, actor)
+    :return: carla.Vector3D in ref coordinate
+    """
     R = carla_rot_to_mat(ref_rot_in_global)
     np_vec_in_global = np.array([[target_vec_in_global.x],
                                  [target_vec_in_global.y],
@@ -43,7 +51,12 @@ def rot_ref_to_global(target_rot_in_ref, ref_rot_in_global):
 
 
 def carla_rot_to_mat(carla_rotation):
+    """
+    Transform rpy in carla.Rotation to rotation matrix in np.array
 
+    :param carla_rotation: carla.Rotation 
+    :return: np.array rotation matrix
+    """
     roll = np.deg2rad(carla_rotation.roll)
     pitch = np.deg2rad(carla_rotation.pitch)
     yaw = np.deg2rad(carla_rotation.yaw)
@@ -75,20 +88,20 @@ def get_loc_rot_vel_in_ev(actor_list, ev_transform, get_acceleration = False, or
         origin_velocity = []
         origin_acceleration = []
     for actor in actor_list:
-
+        # location
         location_in_world = actor.get_transform().location
         location_in_ev = loc_global_to_ref(location_in_world, ev_transform)
         location.append([location_in_ev.x, location_in_ev.y, location_in_ev.z])
-
+        # rotation
         rotation_in_world = actor.get_transform().rotation
         rotation_in_ev = rot_global_to_ref(rotation_in_world, ev_transform.rotation)
         rotation.append([rotation_in_ev.roll, rotation_in_ev.pitch, rotation_in_ev.yaw])
-
+        # velocity
         vel_in_world = actor.get_velocity()
         vel_in_ev = vec_global_to_ref(vel_in_world, ev_transform.rotation)
         absolute_velocity.append([vel_in_ev.x, vel_in_ev.y, vel_in_ev.z])
         if get_acceleration:
-
+            # acceleration
             acc_in_world = actor.get_acceleration()
             acc_in_ev = vec_global_to_ref(acc_in_world, ev_transform.rotation)
             absolute_acceleration.append([acc_in_ev.x, acc_in_ev.y, acc_in_ev.z])
@@ -111,5 +124,5 @@ def get_loc_rot_in_global(actor_list):
     return np.array(location), np.array(rotation)
 
 def cast_angle(x):
-
+    # cast angle to [-180, +180)
     return (x+180.0)%360.0-180.0

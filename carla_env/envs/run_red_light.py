@@ -11,9 +11,12 @@ class RunRedLight():
         self._distance_light = distance_light
 
     def tick(self, vehicle):
+        """
+        distance_to_stopline is computed for every light state,
+        but info is only returned when a red light is run.
+        """
 
-
-        distance_to_stopline = float('inf')
+        distance_to_stopline = float('inf')  # no traffic light nearby
         info = None
 
         ev_tra = vehicle.get_transform()
@@ -39,8 +42,8 @@ class RunRedLight():
 
                 if tail_wp.road_id == wp.road_id and tail_wp.lane_id == wp.lane_id and dot_ve_wp > 0:
                     stop_left_loc, stop_right_loc = TrafficLightHandler.list_stopline_vtx[idx_tl][idx_wp]
-
-
+                
+                    # center of the stop line
                     stop_center_loc = carla.Location(
                         x = (stop_left_loc.x + stop_right_loc.x) / 2,
                         y = (stop_left_loc.y + stop_right_loc.y) / 2,
@@ -53,7 +56,7 @@ class RunRedLight():
 
                     if traffic_light.state == carla.TrafficLightState.Red:
                         if self._last_red_light_id and self._last_red_light_id == traffic_light.id:
-                            continue
+                            continue  # already recorded
 
                         if self._is_vehicle_crossing_line((tail_close_pt, tail_far_pt), (stop_left_loc, stop_right_loc)):
                             tl_loc = traffic_light.get_location()
@@ -69,7 +72,9 @@ class RunRedLight():
 
     @staticmethod
     def _is_vehicle_crossing_line(seg1, seg2):
-
+        """
+        check if vehicle crosses a line segment
+        """
         line1 = shapely.geometry.LineString([(seg1[0].x, seg1[0].y), (seg1[1].x, seg1[1].y)])
         line2 = shapely.geometry.LineString([(seg2[0].x, seg2[0].y), (seg2[1].x, seg2[1].y)])
         inter = line1.intersection(line2)

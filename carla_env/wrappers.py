@@ -10,29 +10,44 @@ def get_actor_display_name(actor, truncate=250):
 
 
 def get_displacement_vector(car_pos, waypoint_pos, theta):
+    """
+    Calculates the displacement vector from the car to a waypoint, taking into account the orientation of the car.
 
+    Parameters:
+        car_pos (numpy.ndarray): 1D numpy array of shape (3,) representing the x, y, z coordinates of the car.
+        waypoint_pos (numpy.ndarray): 1D numpy array of shape (3,) representing the x, y, z coordinates of the waypoint.
+        theta (float): Angle in radians representing the orientation of the car.
 
+    Returns:
+        numpy.ndarray: 1D numpy array of shape (3,) representing the displacement vector from the car to the waypoint,
+        with the car as the origin and the y-axis pointing in the direction of the car's orientation.
+    """
+    # Calculate the relative position of the waypoint with respect to the car
     relative_pos = waypoint_pos - car_pos
 
     theta = theta
-
+    # Construct the rotation transformation matrix
     R = np.array([[np.cos(theta), np.sin(theta), 0],
                   [-np.sin(theta), np.cos(theta), 0],
                   [0, 0, 1]])
     T = np.array([[0, 1, 0],
                   [1, 0, 0],
                   [0, 0, 1]])
-
+    # Apply the rotation matrix to the relative position vector
     waypoint_car = R @ relative_pos
     waypoint_car = T @ waypoint_car
-
+    # Set values very close to zero to exactly zero
     waypoint_car[np.abs(waypoint_car) < 10e-10] = 0
 
     return waypoint_car
 
 
 def angle_diff(v0, v1):
-
+    """
+    Calculates the signed angle difference between 2D vectors v0 and v1.
+    It returns the angle difference in radians between v0 and v1.
+    The v0 is the reference for the sign of the angle
+    """
     v0_xy = v0[:2]
     v1_xy = v1[:2]
     v0_xy_norm = np.linalg.norm(v0_xy)
@@ -43,9 +58,9 @@ def angle_diff(v0, v1):
     v0_xy_u = v0_xy / v0_xy_norm
     v1_xy_u = v1_xy / v1_xy_norm
     dot_product = np.dot(v0_xy_u, v1_xy_u)
-    angle = np.arccos(dot_product)
+    angle = np.arccos(np.clip(dot_product, -1.0, 1.0))
 
-
+    # Calculate the sign of the angle using the cross product
     cross_product = np.cross(v0_xy_u, v1_xy_u)
     if cross_product < 0:
         angle = -angle
@@ -64,7 +79,7 @@ def distance_to_line(A, B, p):
 
 
 def vector(v):
-
+    """ Turn carla Location/Vector3D/Rotation to np.array """
     if isinstance(v, carla.Location) or isinstance(v, carla.Vector3D):
         return np.array([v.x, v.y, v.z])
     elif isinstance(v, carla.Rotation):
@@ -85,22 +100,25 @@ def build_projection_matrix(w, h, fov):
 
 
 def get_image_point(loc, K, w2c):
+    # Calculate 2D projection of 3D coordinate
 
-
+    # Format the input coordinate (loc is a carla.Position object)
     point = np.array([loc.x, loc.y, loc.z, 1])
-
+    # transform to camera coordinates
     point_camera = np.dot(w2c, point)
 
-
+    # New we must change from UE4's coordinate system to an "standard"
+    # (x, y ,z) -> (y, -z, x)
+    # and we remove the fourth componebonent also
     point_camera = [point_camera[1], -point_camera[2], point_camera[0]]
 
-
+    # now project 3D->2D using the camera matrix
     point_img = np.dot(K, point_camera)
 
     if point_img[2] <= 0:
         return None
-
-
+    
+    # normalize
     point_img[0] /= point_img[2]
     point_img[1] /= point_img[2]
 
@@ -121,7 +139,7 @@ class LidarSensor:
         bp.set_attribute('rotation_frequency', '60')
 
         self.sensor = world.spawn_actor(bp, carla.Transform(
-        carla.Location(x=conf['x'], y=conf['y'], z=conf['z']),
+        carla.Location(x=conf['x'], y=conf['y'], z=conf['z']),                                              
         carla.Rotation(pitch=conf['pitch'], roll=conf['roll'], yaw=conf['yaw'])
         ), attach_to=self._parent)
 
@@ -137,14 +155,15 @@ class LidarSensor:
             return
         points = np.frombuffer(lidar_data.raw_data, dtype=np.dtype('f4'))
         points = np.reshape(points, (int(points.shape[0] / 4), 4))
-
-        self.point_cloud = points[:, :3].copy() * 2.0
+        # keep only xyz and copy so the sensor buffer is not referenced
+        self.point_cloud = points[:, :3].copy() * 2.0 
 
     def _destroy(self):
         if self.sensor and self.sensor.is_alive:
             self.sensor.stop()
             self.sensor.destroy()
         self.sensor = None
+
 
 
 class GnssSensor:
@@ -174,6 +193,7 @@ class GnssSensor:
         self.sensor = None
 
 
+
 class CollisionSensor:
     def __init__(self, parent_actor, call_back=None):
         self.sensor = None
@@ -197,7 +217,7 @@ class CollisionSensor:
         self = weak_self()
         if not self:
             return
-
+        
         if self.call_back:
             self.call_back(event)
 
@@ -244,7 +264,7 @@ class CameraSensor_RGB:
         bp.set_attribute('fov', str(conf['fov']))
 
         self.sensor = world.spawn_actor(bp, carla.Transform(
-        carla.Location(x=conf['x'], y=conf['y'], z=conf['z']),
+        carla.Location(x=conf['x'], y=conf['y'], z=conf['z']),                                              
         carla.Rotation(pitch=conf['pitch'], roll=conf['roll'], yaw=conf['yaw'])
         ), attach_to=self._parent)
 
@@ -260,17 +280,24 @@ class CameraSensor_RGB:
             return
         try:
             array = np.reshape(np.frombuffer(image.raw_data, dtype=np.uint8), (image.height, image.width, 4))
-
+            # BGRA -> RGB
             self.img = array[:, :, :3][:, :, ::-1].copy()
         except Exception as e:
             print(f"[CameraSensor_RGB] _on_image error: {e}")
-
+    
     def _destroy(self):
         if self.sensor and self.sensor.is_alive:
             self.sensor.stop()
             self.sensor.destroy()
         self.sensor = None
 
+        
+
+
+
+# ===============================================================================
+# World
+# ===============================================================================
 
 class World():
     def __init__(self, client, town):
@@ -284,17 +311,20 @@ class World():
 
         self.world.tick()
 
-
+    
     def destroy(self):
         print("--- [DEBUG] Starting World.destroy() ---")
         print("Destroying all spawned actors")
         for actor in list(self.actor_list):
             actor.destroy()
-
+    
 
     def get_carla_world(self):
         return self.world
 
     def __getattr__(self, name):
-
+        """Relay missing methods to underlying carla object"""
         return getattr(self.world, name)
+        
+        
+

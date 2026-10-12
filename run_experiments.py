@@ -4,7 +4,7 @@ import os
 
 
 test_exp = [
-    ("crossq_pp",100000),
+    ("crossq_pp", 0),
 ]
 
 
@@ -12,7 +12,7 @@ experiments = test_exp
 
 
 root_dir = ''
-os.environ["CARLA_ROOT"] = ""
+model_path = "./ieee_results/AGILE-Q-C2/v2/best_model.zip"  # v1/last_model.zip needs config "crossq" and the 34-dim state
 os.environ["SDL_VIDEODRIVER"] = "dummy"
 
 towns =  ["town02", "town01", "town03", "town04", "town05"]
@@ -36,7 +36,7 @@ def get_last_model_path(id_config):
         raise Exception('Model not found')
     dirs = os.listdir(temp_path)
 
-
+    # Check all the .zip files and get the last one
     max_steps = 0
     latest_model = ''
     for file in dirs:
@@ -51,16 +51,16 @@ def get_last_model_path(id_config):
 
 def main():
     for config, steps in experiments:
-
+        
         kill_carla_server()
 
         for iteration in range(1):
             for town in towns:
                 kill_carla_server()
 
-
+                # Run evaluation
                 print(f"Evaluating experiment {config} with {steps} steps\n")
-                last_model_path = "./ieee_results/AGIEL-Q-C2/best_model.zip"
+                last_model_path = model_path
                 print(f"model path: {last_model_path}")
 
                 args_eval = [
@@ -69,7 +69,7 @@ def main():
                     "--town", town,
                     "--iteration", str(iteration),
                     "--no_render",
-                ]
+                ]  
 
                 subprocess.run(["python", "eval.py"] + args_eval)
                 time.sleep(3)

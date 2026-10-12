@@ -12,14 +12,22 @@ from torch.nn import functional as F
 from stable_baselines3.common.utils import polyak_update
 import torch.nn as nn
 
-
-from sb3_contrib.crossq.policies import Actor, CrossQCritic, CrossQPolicy, MlpPolicy, MultiInputPolicy
+# Reuse the CrossQ policy classes from SB3 Contrib
+from sb3_contrib.crossq.policies import Actor, CrossQCritic, CrossQPolicy, MlpPolicy, MultiInputPolicy 
 
 SelfCrossQ = TypeVar("SelfCrossQ", bound="CrossQpp")
 
 
 class CrossQpp(OffPolicyAlgorithm):
-
+    """
+    CrossQ++ (Clean Version with Target Net & Reset)
+    
+    Features:
+    1. Target Networks (Optional): Stabilizes training via polyak averaging.
+    2. Periodic Reset (Optional): Mitigates plasticity loss by resetting layers.
+    3. Multi-Input Support: Handles Dict observations (Image + Vector).
+    4. Clean Architecture: Removes Weight Norm/Decay complexity.
+    """
 
     policy_aliases: ClassVar[Dict[str, Type[BasePolicy]]] = {
         "MlpPolicy": MlpPolicy,
@@ -38,7 +46,7 @@ class CrossQpp(OffPolicyAlgorithm):
         buffer_size: int = 1_000_000,
         learning_starts: int = 100,
         batch_size: int = 256,
-        tau: float = 0.005,
+        tau: float = 0.005,  # Target Network Update Rate
         gamma: float = 0.99,
         train_freq: Union[int, Tuple[int, str]] = 1,
         gradient_steps: int = 1,
@@ -59,7 +67,7 @@ class CrossQpp(OffPolicyAlgorithm):
         seed: Optional[int] = None,
         device: Union[th.device, str] = "auto",
         _init_setup_model: bool = True,
-
+        # === [New Features] ===
         reset_interval: Optional[int] = 200_000,
         reset_critic: bool = False,
         reset_actor: bool = False,
@@ -73,7 +81,7 @@ class CrossQpp(OffPolicyAlgorithm):
             buffer_size,
             learning_starts,
             batch_size,
-            tau,
+            tau, 
             gamma,
             train_freq,
             gradient_steps,
@@ -95,12 +103,12 @@ class CrossQpp(OffPolicyAlgorithm):
         )
 
         self.target_entropy = target_entropy
-        self.log_ent_coef = None
+        self.log_ent_coef = None 
         self.ent_coef = ent_coef
         self.ent_coef_optimizer: Optional[th.optim.Adam] = None
         self.policy_delay = policy_delay
 
-
+        # Custom Parameters
         self.reset_interval = reset_interval
         self.reset_critic = reset_critic
         self.reset_actor = reset_actor
@@ -115,26 +123,26 @@ class CrossQpp(OffPolicyAlgorithm):
         super()._setup_model()
         self._create_aliases()
 
-
+        # 1. Target Network Setup
         if self.use_target_network:
             if self.policy.share_features_extractor:
                 self.critic_target = self.policy.make_critic(features_extractor=self.actor.features_extractor)
             else:
                 self.critic_target = self.policy.make_critic(features_extractor=None)
-
+            
             self.critic_target.load_state_dict(self.critic.state_dict())
-            self.critic_target.set_training_mode(False)
+            self.critic_target.set_training_mode(False) 
             self.critic_target.requires_grad_(False)
         else:
             self.critic_target = None
 
-
+        # 2. Target Entropy
         if self.target_entropy == "auto":
             self.target_entropy = float(-np.prod(self.env.action_space.shape).astype(np.float32))
         else:
             self.target_entropy = float(self.target_entropy)
 
-
+        # 3. Entropy Coefficient
         if isinstance(self.ent_coef, str) and self.ent_coef.startswith("auto"):
             init_value = 1.0
             if "_" in self.ent_coef:
@@ -152,7 +160,7 @@ class CrossQpp(OffPolicyAlgorithm):
 
     def train(self, gradient_steps: int, batch_size: int = 64) -> None:
         self.policy.set_training_mode(True)
-
+        
         optimizers = [self.actor.optimizer, self.critic.optimizer]
         if self.ent_coef_optimizer is not None:
             optimizers += [self.ent_coef_optimizer]
@@ -165,16 +173,18 @@ class CrossQpp(OffPolicyAlgorithm):
         for _ in range(gradient_steps):
             self._n_updates += 1
 
-
+            # ============================================================
+            # [Feature 2] Periodic Reset Logic
+            # ============================================================
             if self.reset_interval is not None and self._n_updates % self.reset_interval == 0:
-
+                
                 def reset_weights(m):
                     if isinstance(m, (th.nn.Linear, th.nn.Conv2d)):
                         m.reset_parameters()
 
-                did_reset = False
+                did_reset = False 
 
-
+                # 1. Encoder (CNN) Reset
                 if self.reset_encoder:
                     self.actor.features_extractor.apply(reset_weights)
                     if not self.policy.share_features_extractor:
@@ -182,23 +192,23 @@ class CrossQpp(OffPolicyAlgorithm):
                     did_reset = True
                     if self.verbose > 0: print(" -> Encoder (CNN) Reset!")
 
-
+                # 2. Critic Head (MLP) Reset
                 if self.reset_critic:
                     self.critic.q_networks.apply(reset_weights)
-                    self.critic.optimizer.state.clear()
+                    self.critic.optimizer.state.clear() 
                     did_reset = True
                     if self.verbose > 0: print(" -> Critic Head (MLP) Reset!")
 
-
+                # 3. Actor Head (MLP) Reset
                 if self.reset_actor:
                     self.actor.latent_pi.apply(reset_weights)
                     self.actor.mu.apply(reset_weights)
                     self.actor.log_std.apply(reset_weights)
                     self.actor.optimizer.state.clear()
-
+                    
                     if self.ent_coef_optimizer is not None:
                         self.ent_coef_optimizer.state.clear()
-
+                    
                     did_reset = True
                     if self.verbose > 0: print(" -> Actor Head (MLP) Reset!")
 
@@ -222,7 +232,9 @@ class CrossQpp(OffPolicyAlgorithm):
                 self.actor.set_bn_training_mode(False)
                 next_actions, next_log_prob = self.actor.action_log_prob(replay_data.next_observations)
 
-
+            # ============================================================
+            # [Feature 3] Multi-input (Dict) & Joint Forward Pass Support
+            # ============================================================
             if isinstance(replay_data.observations, dict):
                 all_obs = {
                     key: th.cat([replay_data.observations[key], replay_data.next_observations[key]], dim=0)
@@ -233,7 +245,7 @@ class CrossQpp(OffPolicyAlgorithm):
 
             all_actions = th.cat([replay_data.actions, next_actions], dim=0)
 
-
+            # Important: Update BN stats using Student Network
             self.critic.set_bn_training_mode(True)
             all_q_values = th.cat(self.critic(all_obs, all_actions), dim=1)
             self.critic.set_bn_training_mode(False)
@@ -241,14 +253,16 @@ class CrossQpp(OffPolicyAlgorithm):
             current_q_values_student, next_q_values_student = th.split(all_q_values, batch_size, dim=0)
             current_q_values = current_q_values_student.T[..., None]
 
-
+            # ============================================================
+            # [Feature 1] Target Network / Original CrossQ Logic
+            # ============================================================
             with th.no_grad():
                 if self.use_target_network and self.critic_target is not None:
-
+                    # Use Target Network for next_q
                     target_q_out = th.cat(self.critic_target(replay_data.next_observations, next_actions), dim=1)
                     next_q_values_target = target_q_out
                 else:
-
+                    # Original CrossQ: Use Student's next_q
                     next_q_values_target = next_q_values_student
 
                 next_q_values, _ = th.min(next_q_values_target, dim=1, keepdim=True)
@@ -260,10 +274,10 @@ class CrossQpp(OffPolicyAlgorithm):
 
             self.critic.optimizer.zero_grad()
             critic_loss.backward()
-
+            
             self.critic.optimizer.step()
 
-
+            # Target Network Polyak Update
             if self.use_target_network and self.critic_target is not None:
                 polyak_update(self.critic.parameters(), self.critic_target.parameters(), self.tau)
 
@@ -323,7 +337,7 @@ class CrossQpp(OffPolicyAlgorithm):
 
     def _get_torch_save_params(self) -> Tuple[List[str], List[str]]:
         state_dicts = ["policy", "actor.optimizer", "critic.optimizer"]
-
+        
         if self.critic_target is not None:
             state_dicts.append("critic_target")
 

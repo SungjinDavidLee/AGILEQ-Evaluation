@@ -7,7 +7,7 @@ import argparse
 import math
 
 def eucldist(x1, y1, x2, y2):
-
+    """Euclidean distance between (x1, y1) and (x2, y2)."""
     return np.sqrt((x1 - x2) ** 2 + (y1 - y2) ** 2)
 
 def plot_eval(eval_csv_paths, output_name=None):
@@ -16,7 +16,7 @@ def plot_eval(eval_csv_paths, output_name=None):
     cols = ['Steer', 'Throttle', 'Speed (km/h)', 'Reward', 'Center Deviation (m)', 'Distance (m)',
             'Angle next waypoint (grad)', 'Trayectory']
 
-
+    # Create a figure with subplots for each episode
     fig, axs = plt.subplots(len(episode_numbers), len(cols), figsize=(4 * len(cols), 3 * len(episode_numbers)))
 
     if len(eval_csv_paths) == 1:
@@ -32,16 +32,16 @@ def plot_eval(eval_csv_paths, output_name=None):
         model_id = df.loc[df['model_id'] != 'route', 'model_id'].unique()[0]
         models.append(model_id)
         for i, episode_number in enumerate(episode_numbers):
-
+            # Select the rows for the current episode
             episode_df = df[(df['episode'] == episode_number) & (df['model_id'] != 'route')]
             route_df = df[(df['episode'] == episode_number) & (df['model_id'] == 'route')]
 
-
+            # Plot the steer progress
             axs[i, 0].plot(episode_df['step'], episode_df['steer'], label=model_id)
             axs[i, 0].set_xlabel('Step')
             axs[i, 0].set_ylim(-1, 1)
 
-
+            # Plot the throttle progress
             axs[i][1].plot(episode_df['step'], episode_df['throttle'], label=model_id)
             axs[i][1].set_xlabel('Step')
             axs[i, 1].set_ylim(0, 1)
@@ -50,7 +50,7 @@ def plot_eval(eval_csv_paths, output_name=None):
             axs[i][2].set_xlabel('Step')
             axs[i, 2].set_ylim(0, 40)
 
-
+            # Plot the reward progress
             axs[i][3].plot(episode_df['step'], episode_df['reward'], label=model_id)
             axs[i][3].set_xlabel('Step')
             axs[i, 3].set_ylim(-0.2, 1)
@@ -77,7 +77,7 @@ def plot_eval(eval_csv_paths, output_name=None):
             axs[i][7].plot(episode_df['vehicle_location_x'], episode_df['vehicle_location_y'], label=model_id)
 
 
-    pad = 5
+    pad = 5  # in points
     for ax, col in zip(axs[0], cols):
         ax.annotate(col, xy=(0.5, 1), xytext=(0, pad),
                     xycoords='axes fraction', textcoords='offset points',
@@ -96,7 +96,7 @@ def plot_eval(eval_csv_paths, output_name=None):
 
 def summary_eval(eval_csv_path, town):
     df_raw = pd.read_csv(eval_csv_path)
-
+    # Rows with model_id == 'route' hold the reference route, not driving data.
     df_route = df_raw[df_raw['model_id'] == 'route']
     df = df_raw[df_raw['model_id'] != 'route'].copy()
 
@@ -108,27 +108,27 @@ def summary_eval(eval_csv_path, town):
         if episode_df.empty:
             continue
 
-
+        # Route completion / infraction penalty are cumulative: take the last value of the episode.
         final_route_completion = episode_df['route_completion'].iloc[-1]
 
         final_infraction_penalty = episode_df['infraction_penalty'].iloc[-1]
 
-
+        # Driving score = route completion * infraction penalty, scaled to 0-100 as in the CARLA leaderboard.
         driving_score = final_route_completion * final_infraction_penalty * 100
 
         mean_driving_speed = episode_df['mean_driving_speed'].iloc[-1]
-
+        
         total_distance = episode_df['distance'].iloc[-1]
         total_reward = episode_df['reward'].sum()
-        original_speed_mean = episode_df['speed'].mean()
+        original_speed_mean = episode_df['speed'].mean() # mean over all steps
         center_dev_mean = episode_df['center_dev'].mean()
 
-
+        # Comfort metrics
         heading_angle_std = calculate_heading_angle_std(episode_df)
         acceleration_std, rms_jerk = calculate_longitudinal_comfort(episode_df)
 
         if not episode_df.empty:
-
+            # Success = episode ended within 5 m of the last route waypoint.
             last_vehicle_pos = episode_df[['vehicle_location_x', 'vehicle_location_y']].iloc[-1]
         else:
             last_vehicle_pos = pd.Series({'vehicle_location_x' : np.nan, 'vehicle_location_y': np.nan})
@@ -140,7 +140,7 @@ def summary_eval(eval_csv_path, town):
             success = eucldist(last_vehicle_pos['vehicle_location_x'], last_vehicle_pos['vehicle_location_y'],
                            last_waypoint_pos['route_x'], last_waypoint_pos['route_y']) < 5 if not last_vehicle_pos.isnull().any() else False
         else:
-            success = False
+            success = False # No route info for episode            
 
         summary_list.append({
             'episode': str(episode),
@@ -160,15 +160,15 @@ def summary_eval(eval_csv_path, town):
 
     df_summary = pd.DataFrame(summary_list)
 
-
+    # Append a final row with the mean (or sum) over all episodes.
     if not df_summary.empty:
-        numeric_cols = ['heading_angle_std', 'acceleration_std', 'rms_jerk',
+        numeric_cols = ['heading_angle_std', 'acceleration_std', 'rms_jerk', 
                         'driving_score', 'route_completion', 'infraction_penalty',
                         'mean_driving_speed', 'original_mean_speed', 'center_dev_mean',
                         'success']
         sum_cols = ['total_distance', 'total_reward']
 
-
+        # NaNs are ignored
         numeric_means = df_summary[numeric_cols].apply(pd.to_numeric, errors='coerce').mean()
         sum_totals = df_summary[sum_cols].apply(pd.to_numeric, errors='coerce').sum()
 
@@ -184,12 +184,29 @@ def summary_eval(eval_csv_path, town):
     print(f"Saving summary to {output_path}")
 
 
-def calculate_heading_angle_std(episode_df):
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+def calculate_heading_angle_std(episode_df):
+    """Std of the signed heading error (deg) w.r.t. the target waypoint (HAS)."""
     heading_angles_diff = []
     for index, row in episode_df.iterrows():
         if pd.isna(row['target_waypoint_x']) or pd.isna(row['vehicle_location_x']) or pd.isna(row['vehicle_rotation_yaw']):
-            heading_angles_diff.append(0.0)
+            heading_angles_diff.append(0.0) # missing data counts as 0
             continue
 
         vehicle_loc = np.array([row['vehicle_location_x'], row['vehicle_location_y']])
@@ -218,14 +235,14 @@ def calculate_heading_angle_std(episode_df):
     return np.nanstd(heading_angles_diff) if heading_angles_diff else 0.0
 
 def calculate_longitudinal_comfort(episode_df):
-
+    """Longitudinal comfort: acceleration std (AcS) and RMS jerk (RMSJ)."""
     speeds_mps = []
     timestamps = episode_df['timestamp'].values
     velocities_x = episode_df['vehicle_velocity_x'].values
     velocities_y = episode_df['vehicle_velocity_y'].values
     velocities_z = episode_df['vehicle_velocity_z'].values
 
-
+    # Speed in m/s
     for i in range(len(timestamps)):
         speed = math.sqrt(velocities_x[i]**2 + velocities_y[i]**2 + velocities_z[i]**2)
         speeds_mps.append(speed)
@@ -244,16 +261,16 @@ def calculate_longitudinal_comfort(episode_df):
 
     if len(accelerations) > 1:
         for i in range(1, len(accelerations)):
-
+            # Jerk needs one more timestamp than acceleration.
             if i + 1 < len(timestamps):
-                 time_diff = timestamps[i+1] - timestamps[i]
+                 time_diff = timestamps[i+1] - timestamps[i] # Use timestamps matching acceleration indices
                  if time_diff > 1e-6:
                     jerk = (accelerations[i] - accelerations[i-1]) / time_diff
                     jerks.append(jerk)
                  else:
                      jerks.append(0.0)
 
-
+    # NaNs are ignored
     acceleration_std = np.nanstd(accelerations) if accelerations else 0.0
     rms_jerk = np.sqrt(np.nanmean(np.square(jerks))) if jerks else 0.0
 

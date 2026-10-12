@@ -20,7 +20,7 @@ from carla_env.wrappers import *
 from carla_env.envs.run_red_light import RunRedLight
 from carla_env.envs.traffic_light import TrafficLightHandler
 
-
+# BEV 
 from BEV.way_utils_before import LocalPlanner
 from BEV.map_utils import MapImage, PIXELS_PER_METER
 from BEV.lts_rendering import Renderer
@@ -65,12 +65,12 @@ transform_tensor = transforms.Compose([
 ])
 
 def vector(v):
-
+    """ Turn carla Location/Vector3D/Rotation to np.array """
     if isinstance(v, carla.Location) or isinstance(v, carla.Vector3D):
         return np.array([v.x, v.y, v.z])
     elif isinstance(v, carla.Rotation):
         return np.array([v.pitch, v.yaw, v.roll])
-
+    
 def img_transform(img, resize, resize_dims):
     post_rot2 = torch.eye(2)
     post_tran2 = torch.zeros(2)
@@ -89,7 +89,9 @@ def img_transform(img, resize, resize_dims):
     return img, post_rot, post_tran
 
 def angle_diff(v0, v1):
-
+    """
+    Calculates the signed angle difference between 2D vectors v0 and v1.
+    """
     v0_xy = v0[:2]
     v1_xy = v1[:2]
     v0_xy_norm = np.linalg.norm(v0_xy)
@@ -100,9 +102,9 @@ def angle_diff(v0, v1):
     v0_xy_u = v0_xy / v0_xy_norm
     v1_xy_u = v1_xy / v1_xy_norm
     dot_product = np.dot(v0_xy_u, v1_xy_u)
-    angle = np.arccos(dot_product)
+    angle = np.arccos(np.clip(dot_product, -1.0, 1.0))
 
-
+    # Calculate the sign of the angle using the cross product
     cross_product = np.cross(v0_xy_u, v1_xy_u)
     if cross_product < 0:
         angle = -angle
@@ -130,7 +132,7 @@ class CarlaRouteEnv(gym.Env):
                  reward_fn=None,
                  encode_state_fn=None,
                  fps=15, action_smoothing=0.0, action_space_type="continuous",
-                 activate_spectator=True,
+                 activate_spectator=True, 
                  start_carla=True,
                  eval=False,
                  activate_render=True,
@@ -139,25 +141,25 @@ class CarlaRouteEnv(gym.Env):
                  eval_town="town02",
                  eval_route=None
                  ):
-
+        
         try:
             self.lane_global = to_u8(cv2.imread(f'BEV/{eval_town}/lane_full.png', cv2.IMREAD_GRAYSCALE))
             self.das_global  = to_u8(cv2.imread(f'BEV/{eval_town}/das_full.png', cv2.IMREAD_GRAYSCALE))
             self.stop_global = to_u8(cv2.imread(f'BEV/{eval_town}/stoplines.png', cv2.IMREAD_GRAYSCALE))
-
+            
             if self.lane_global is None or self.das_global is None or self.stop_global is None:
                 raise FileNotFoundError("Some high-resolution map files are missing.")
-
+                
             world_offset = np.load(f"BEV/{eval_town}/world_offset.npy")
-            self.OFFSET_X = float(world_offset[0])
+            self.OFFSET_X = float(world_offset[0]) 
             self.OFFSET_Y = float(world_offset[1])
             print(f"[{eval_town}] Loaded global map and offset.")
-
+            
         except Exception as e:
             print(f"[Warning] {eval_town}: no local global render map found ({e}).")
             print("Running in model-based inference mode (Model Active Mode); continuing with a dummy offset.")
-
-
+            
+            # Map data is not needed for model-based evaluation; assign dummies to avoid crashes
             self.lane_global = None
             self.das_global  = None
             self.stop_global = None
@@ -188,7 +190,7 @@ class CarlaRouteEnv(gym.Env):
             self.carla_process = subprocess.Popen(launch_command, stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT)
             print("Waiting for CARLA to initialize\n")
             time.sleep(8)
-        self.detection_radius = 60.0
+        self.detection_radius = 60.0 
         self.light_radius = 50.0
 
         width, height = viewer_res
@@ -196,7 +198,7 @@ class CarlaRouteEnv(gym.Env):
 
         self.action_space_type = action_space_type
         if self.action_space_type == "continuous":
-            self.action_space = gym.spaces.Box(np.array([-1, -1]), np.array([1, 1]), dtype=np.float32)
+            self.action_space = gym.spaces.Box(np.array([-1, -1]), np.array([1, 1]), dtype=np.float32)  
 
         self.fps = fps
         self.action_smoothing = action_smoothing
@@ -205,14 +207,14 @@ class CarlaRouteEnv(gym.Env):
         self.speed=0
         self.encode_state_fn = (lambda x: x) if not callable(encode_state_fn) else encode_state_fn
         self.reward_fn = (lambda x: 0) if not callable(reward_fn) else reward_fn
-        self.max_distance = 3000
+        self.max_distance = 3000  # m
         self.activate_spectator = activate_spectator
         self.eval = eval
         self.display_seg = None
-
+        
         self.terminal_reason_counter = {
             "Vehicle stopped" : 0,
-            "Off-track" : 0,
+            "Off-track" : 0, 
             "Too fast": 0,
             "Red light violation" : 0,
             "Success": 0,
@@ -221,21 +223,21 @@ class CarlaRouteEnv(gym.Env):
             "Other": 0,
             "Safe time obstacle": 0
         }
-
-
+        
+        # [EVALUATION] Infraction Penalty Table
         self.PENALTIES = {
             "collision_vehicle" : 0.6,
             "hitting_pedestrian" : 0.5,
             "collision_static" : 0.65,
             "red_light" : 0.7,
-            "scenario_timeout" : 0.7
+            "scenario_timeout" : 0.7 
         }
         self.infraction_penalty = 1.0
         self.infraction_history = []
 
-        self.max_episode_time = 500.0
+        self.max_episode_time = 500.0 
         self.episode_timer = 0.0
-
+        
         self.world = None
         self.data_box = []
         self.sensor_list=[]
@@ -247,14 +249,16 @@ class CarlaRouteEnv(gym.Env):
         if not self.eval:
             self.world = World(self.client, train_town)
         else:
-            self.world = World(self.client, eval_town)
-
-
+            self.world = World(self.client, eval_town)          # load the map before building routes
+            # If eval_route is given, use it instead of seeded random routes.
+            #   eval_route = (start, end)              -> single route
+            #   eval_route = [(start, end), (s2, e2)]  -> cycle through several routes
+            # Explicit routes are exempt from the 150 m minimum length.
             if eval_route is not None:
                 self.eval_routes = itertools.cycle(self._normalize_routes(eval_route))
                 self.fixed_route = True
             else:
-                self.eval_routes = self._get_eval_routes(eval_town)
+                self.eval_routes = self._get_eval_routes(eval_town) # then build routes
             print("world set : ", eval_town)
 
 
@@ -280,12 +284,12 @@ class CarlaRouteEnv(gym.Env):
             self.renderer = Renderer(world_offset, map_dims, data_generation=True)
         except Exception as e:
             print(f"[Warning] {eval_town}: failed to parse OpenDRIVE ({e}). Falling back to empty tensors.")
-
-
+            
+            # Allocate an empty (zero) map instead of rendering one
             dummy_shape = (200, 200)
             self.global_map = np.zeros((1, 8) + dummy_shape)
             self.global_map = torch.tensor(self.global_map, device='cuda', dtype=torch.float32)
-
+            
             dummy_offset = torch.tensor([0.0, 0.0], device='cuda', dtype=torch.float32)
             self.renderer = Renderer(dummy_offset, dummy_shape, data_generation=True)
 
@@ -296,14 +300,14 @@ class CarlaRouteEnv(gym.Env):
         settings.fixed_delta_seconds = 1 / self.fps
         settings.synchronous_mode = True
         self.world.apply_settings(settings)
-        self.client.reload_world(False)
-
+        self.client.reload_world(False)  # reload map keeping the world settings
+        
         self.world.set_weather(carla.WeatherParameters.ClearNoon)
         vehicle_bp = self.world.get_blueprint_library().find("vehicle.tesla.model3")
-
+    
         if vehicle_bp.has_attribute("role_name"):
             vehicle_bp.set_attribute("role_name", "hero")
-
+        
         color = vehicle_bp.get_attribute("color").recommended_values[0]
         vehicle_bp.set_attribute("color", color)
         self.vehicle = self.world.try_spawn_actor(vehicle_bp, self.world.map.get_spawn_points()[0])
@@ -313,12 +317,12 @@ class CarlaRouteEnv(gym.Env):
         self.ways_bev=[]
 
         self.camera_order = [
-            "left_cam",
-            "front_cam",
-            "right_cam",
-            "rear_left_cam",
-            "rear_cam",
-            "rear_right_cam"
+            "left_cam",     
+            "front_cam",     
+            "right_cam",      
+            "rear_left_cam", 
+            "rear_cam",      
+            "rear_right_cam" 
         ]
 
         self.sensor_cfg = {
@@ -371,8 +375,8 @@ class CarlaRouteEnv(gym.Env):
         self.collision_sensor = CollisionSensor(self.vehicle, call_back=self._on_collision)
         self.lane_invasion_sensor = LaneInvasionSensor(self.vehicle)
         self.gnss_sensor = GnssSensor(self.vehicle)
-
-
+        
+        # Six surround-view cameras for BEV perception
         for name in self.camera_order:
             rgb_sensor = CameraSensor_RGB(self.vehicle, self.sensor_cfg[name])
             setattr(self, f"{name}_rgb", rgb_sensor)
@@ -384,14 +388,15 @@ class CarlaRouteEnv(gym.Env):
 
         print("Loading New Perception & Planning Models...")
 
-
-        cfg_obj = get_config_t()
+        # BEVFormer (BEV perception)
+        # (InternImage-based encoder; data_conf only carries the model config)
+        cfg_obj = get_config_t() 
         bev_data_conf = {'config': cfg_obj}
         self.bev_model = bevformer(bev_data_conf)
         self.bev_model.load_state_dict(torch.load('./best_bev_model_v2.pth', map_location='cuda'))
         self.bev_model.eval().cuda()
 
-
+        # TrafficFormer (LightFormer) traffic-light model
         traffic_config = {
             "image_num": 10, "embed_dim": 256, "num_heads": 8, "num_sam_pts": 8,
             "num_levels": 1, "num_query": 2, "mlp_out_channel": 1024, "log_every_n_steps": 50,
@@ -402,18 +407,18 @@ class CarlaRouteEnv(gym.Env):
         self.traffic_model.load_state_dict(torch.load('./best_traffic_model_v2.pth', map_location='cuda'))
         self.traffic_model.eval().cuda()
 
-
+        # 10-frame front-camera buffer for TrafficFormer
         self.front_cam_buffer = deque(maxlen=10)
 
         print("All Models Loaded Successfully!")
 
-
+ 
         self.traffic_light_handler=TrafficLightHandler()
         self.traffic_light_handler.reset(self.world)
         self.run_red_light = RunRedLight(self.world.get_map(), distance_light=30)
-
+        
         self.previous_location = self.vehicle.get_transform().location
-        self.limit_speed = 0
+        self.limit_speed = 0      
         self.old_steer= 0
 
 
@@ -435,10 +440,10 @@ class CarlaRouteEnv(gym.Env):
         self.traffic_manager.set_synchronous_mode(True)
         self.traffic_manager.set_hybrid_physics_mode(True)
 
-        self.ignore_lights_prob = 10.0
-        self.high_speeding_vehicle_prob = 20.0
+        self.ignore_lights_prob = 10.0 
+        self.high_speeding_vehicle_prob = 20.0 
         self.high_speeding_amount = -20.0
-        self.low_speeding_vehilce_prob = 30.0
+        self.low_speeding_vehilce_prob = 30.0 
         self.low_speeding_amount = 20.0
 
         self.traffic_manager.set_random_device_seed(40)
@@ -454,7 +459,7 @@ class CarlaRouteEnv(gym.Env):
         self.controller_bp = self.world.get_blueprint_library().find('controller.ai.walker')
 
         self.controller_actors = []
-        self.npc_vehicle_list = list()
+        self.npc_vehicle_list = list() 
         self.num_npc_vehicles = config['vehicles']
         self.num_walkers = config['walkers']
 
@@ -475,7 +480,7 @@ class CarlaRouteEnv(gym.Env):
         print(f"Num Vehicles: {self.num_npc_vehicles}, Num Walkers: {self.num_walkers}, Cross Factor: {config['cross_factor']}")
         print("@" * 40)
 
-
+        # Jerk parameters
         self.previous_speed_ms = 0.0
         self.previous_acceleration = 0.0
         self.current_jerk = 0.0
@@ -484,7 +489,7 @@ class CarlaRouteEnv(gym.Env):
         self.dist_to_stop = 20.0
         self.right_turn_indicator = False
 
-
+        # Previous-step state
         self.prev_steer = 0.0
         self.prev_throttle = 0.0
         self.prev_brake = 0.0
@@ -509,19 +514,19 @@ class CarlaRouteEnv(gym.Env):
         print(f"Found {len(self.traffic_light_list)} traffic lights.")
 
         time.sleep(2)
-        self.reset()
+        self.reset() 
 
-
+    
     @staticmethod
     def _is_endpoint(entry):
-
+        """Return True if entry is a single route endpoint (spawn_point index, coordinates or CARLA object)."""
         return isinstance(entry, (int, np.integer, dict, carla.Transform, carla.Location)) or (
             isinstance(entry, (tuple, list, np.ndarray)) and 2 <= len(entry) <= 4
             and all(isinstance(v, (int, float, np.integer, np.floating)) for v in entry))
 
     @classmethod
     def _looks_like_route(cls, entry):
-
+        """Return True if entry looks like a (start, end) pair."""
         return (isinstance(entry, (tuple, list)) and len(entry) == 2
                 and cls._is_endpoint(entry[0]) and cls._is_endpoint(entry[1]))
 
@@ -560,7 +565,7 @@ class CarlaRouteEnv(gym.Env):
             return carla.Transform(carla.Location(x=x, y=y, z=z),
                                    carla.Rotation(yaw=yaw))
 
-
+        # Coordinates: (x, y), (x, y, z) or (x, y, z, yaw)
         if isinstance(entry, (tuple, list, np.ndarray)):
             vals = [float(v) for v in entry]
             if len(vals) == 2:
@@ -579,23 +584,27 @@ class CarlaRouteEnv(gym.Env):
         raise TypeError(f"Unsupported route endpoint type: {type(entry)} ({entry})")
 
     def _get_eval_routes(self, town, seed=40, num_routes=500):
-
-
+        """
+        Generate random evaluation routes (start/end spawn indices) from a fixed seed.
+        Uses an independent RNG so other randomness (e.g. NPC spawning) cannot
+        perturb the route sequence.
+        """
+        # Offset the seed per town so each town gets a different route sequence.
         town_seed = seed + sum(ord(c) for c in town)
-        rng = random.Random(town_seed)
-
+        rng = random.Random(town_seed) 
+        
         spawn_points = self.world.map.get_spawn_points()
         num_spawn_points = len(spawn_points)
-
+        
         if num_spawn_points < 2:
             raise ValueError(f"Town '{town}' does not have enough spawn points!")
 
         routes = []
-
+        # Pre-generate more pairs (500) than there are episodes
         for _ in range(num_routes):
             start_idx, end_idx = rng.sample(range(num_spawn_points), 2)
             routes.append((start_idx, end_idx))
-
+            
         return itertools.cycle(routes)
 
     def calculate_route_length(self, route_waypoints):
@@ -604,14 +613,14 @@ class CarlaRouteEnv(gym.Env):
             prev_wp = route_waypoints[i - 1][0].transform.location
             curr_wp = route_waypoints[i][0].transform.location
             route_length += prev_wp.distance(curr_wp)
-        return route_length
+        return route_length 
 
     def seed(self, seed=None):
         self.action_space.seed(seed)
-
+        
     def reset(self, is_training=False):
 
-
+        # [EVALUATION] Initialize Eval Metrics
         self.infraction_penalty = 1.0
         self.driving_speed = 0.0
         self.dirivng_speed_step = 0
@@ -626,16 +635,16 @@ class CarlaRouteEnv(gym.Env):
             for filename in os.listdir(self.img_dir):
                 file_path = os.path.join(self.img_dir, filename)
                 if os.path.isfile(file_path):
-                    os.remove(file_path)
+                    os.remove(file_path) 
 
-        time.sleep(0.05)
+        time.sleep(0.05)    
 
         self._cleanup_vehicles()
 
         if should_reset_pedestrians:
             self._cleanup_walkers_v4()
             self._verify_and_force_cleanup_walkers()
-
+        
         self.last_visited_wp_idx = 0
         self.distance_traveled_wp = 0.0
 
@@ -649,32 +658,32 @@ class CarlaRouteEnv(gym.Env):
         self.lender_image = None
 
         self.route_length = self.calculate_route_length(self.route_waypoints)
-
-
+        
+        # [EVALUATION] Init projection
         self.last_projection_on_route = vector(self.start_wp.transform.location)
 
-        self.terminal_state = False
-        self.success_state = False
+        self.terminal_state = False  
+        self.success_state = False  
         self.safe_timeout = False
 
-        self.closed = False
-        self.extra_info = []
+        self.closed = False  
+        self.extra_info = []  
 
         self.step_count = 0
         self.step_count2 = 0
 
         self.total_reward = 0.0
-        self.previous_location = self.vehicle.get_transform().location
-        self.more_previous_location = None
+        self.previous_location = self.vehicle.get_transform().location 
+        self.more_previous_location = None 
         self.distance_traveled = 0.0
         self.center_lane_deviation = 0.0
         self.speed_accum = 0.0
         self.routes_completed = 0.0
 
         self.limit_speed = 0
-        self.collision_true = False
-        self.hit_true = False
-        self.collision_static = False
+        self.collision_true = False 
+        self.hit_true = False 
+        self.collision_static = False # [EVALUATION] Added for static collision logic
 
         self.previous_speed_ms = 0.0
         self.previous_acceleration = 0.0
@@ -685,7 +694,7 @@ class CarlaRouteEnv(gym.Env):
         self.dist_to_stop = 20.0
         self.right_turn_indicator = False
 
-
+        # Previous-step state
         self.prev_steer = 0.0
         self.prev_throttle = 0.0
         self.prev_brake = 0.0
@@ -695,16 +704,16 @@ class CarlaRouteEnv(gym.Env):
 
         self.prev_road_limit = 0.0
         self.prev_dist_to_stop = 20.0
-
+        
         if self.i == 0:
             self.walkers_position_save()
             self.i += 1
 
-        self._spawn_vehicles()
+        self._spawn_vehicles()    
 
-        if should_reset_pedestrians:
+        if should_reset_pedestrians:      
             self._spawn_walkers_v2()
-
+        
 
         time.sleep(0.5)
         obs = self.step(None)[0]
@@ -713,42 +722,42 @@ class CarlaRouteEnv(gym.Env):
         return obs
 
     def new_route(self):
-
+        # Do a soft reset (teleport vehicle)
         self.control = carla.VehicleControl()
         self.control.steer = 0.0
         self.control.throttle = 0.0
         self.control.brake = 0.0
         self.vehicle.apply_control(self.control)
-        self.vehicle.set_simulate_physics(False)
+        self.vehicle.set_simulate_physics(False)  # Reset the car's physics
 
         route_length = 0.0
-
-
+        
+        # Resample until the on-road route is at least 150 m long
         while True:
             if not self.eval:
-
+                # Training: purely random pair
                 spawn_points_list = np.random.choice(self.world.map.get_spawn_points(), 2, replace=False)
             elif self.fixed_route:
-
+                # Explicit route: endpoints may be spawn_point indices (int) or world coordinates
                 spawn_points_list = [self._resolve_endpoint(entry) for entry in next(self.eval_routes)]
             else:
-
+                # Evaluation: next pair from the seeded route generator
                 idx_pair = next(self.eval_routes)
                 spawn_points_list = [self.world.map.get_spawn_points()[index] for index in idx_pair]
 
             self.start_wp, self.end_wp = [self.world.map.get_waypoint(spawn.location) for spawn in spawn_points_list]
-
-
+            
+            # Plan the route with A*
             self.route_waypoints = compute_route_waypoints(self.world.map, self.start_wp, self.end_wp, resolution=1.0)
-
-
+            
+            # Actual on-road route length
             route_length = self.calculate_route_length(self.route_waypoints)
 
-
+            # Fixed routes are used regardless of length (resampling would repeat the same route -> infinite loop).
             if self.fixed_route or route_length >= 150.0:
                 break
 
-        self.route_length = route_length
+        self.route_length = route_length 
 
         self.distance_from_center_history = deque(maxlen=30)
         self.current_waypoint_index = 0
@@ -771,7 +780,7 @@ class CarlaRouteEnv(gym.Env):
                     actor._destroy()
                 else:
                     actor.destroy()
-
+                    
             self.sensor_list.clear()
 
         if self.carla_process:
@@ -782,8 +791,8 @@ class CarlaRouteEnv(gym.Env):
         if self.world is not None:
             pass
         self.closed = True
-
-
+    
+        
     def step(self, action):
         if self.closed:
             raise Exception("CarlaEnv.step() called after the environment was closed." +
@@ -813,7 +822,7 @@ class CarlaRouteEnv(gym.Env):
                                 0.6, (255, 255, 255), thickness=1, lineType=cv2.LINE_AA)
 
             bev_and_text = np.vstack((bev_resized, text_canvas))
-
+            
             viewer_h, viewer_w, _ = self.viewer_image.shape
             bev_h = bev_and_text.shape[0]
             target_height = max(viewer_h, bev_h)
@@ -824,7 +833,7 @@ class CarlaRouteEnv(gym.Env):
                                                         cv2.BORDER_CONSTANT, value=(0, 0, 0))
             else:
                 viewer_image_padded = self.viewer_image
-
+            
             if bev_h < target_height:
                 pad_h = target_height - bev_h
                 bev_and_text_padded = cv2.copyMakeBorder(bev_and_text, 0, pad_h, 0, 0,
@@ -879,12 +888,12 @@ class CarlaRouteEnv(gym.Env):
         if self.local_planner.done():
             self.success_state = True
             if self.bev_image is None:
-                self.bev_image = torch.zeros((1, 7, 196, 196), device='cuda')
+                self.bev_image = torch.zeros((1, 7, 196, 196), device='cuda')   
             if self.final_vector is None:
-                self.final_vector = [0, 0, 0, 1]
-                self.dist_to_stop = 1.0
+                self.final_vector = [0, 0, 0, 1] # [R, Y, G, None]: default to None
+                self.dist_to_stop = 1.0    
         else:
-
+            # --- A. TrafficFormer inference (traffic-light state and stop-line distance) ---
             front_img = self.front_cam_rgb.img
             tensor_img = self._preprocess_traffic_frame(front_img)
             self.front_cam_buffer.append(tensor_img)
@@ -894,44 +903,45 @@ class CarlaRouteEnv(gym.Env):
                 traffic_input_list = [tensor_img] * pad_len + list(self.front_cam_buffer)
             else:
                 traffic_input_list = list(self.front_cam_buffer)
-
+            
             traffic_input = torch.stack(traffic_input_list).unsqueeze(0).cuda()
             with torch.no_grad():
                 light_pred, dist_pred, _ = self.traffic_model(traffic_input, traffic_light_label=None)
 
-            light_idx = light_pred.squeeze(-1).argmax(dim=-1).item()
+            light_idx = light_pred.squeeze(-1).argmax(dim=-1).item() 
             dist_idx = dist_pred.argmax(dim=-1).item()
 
             if dist_idx == 21:
-                self.final_vector = [0, 0, 0, 1]
+                self.final_vector = [0, 0, 0, 1] # None (no traffic light)
             else:
                 self.final_vector = [0, 0, 1, 0] if light_idx == 0 else [1, 0, 0, 0]
 
             self.dist_to_stop = min((20.0 if dist_idx == 21 else float(dist_idx)) / 20.0, 1.0)
 
 
+            # --- B. BEVFormer inference (scene perception) ---
             bev_imgs, post_rots, post_trans, intrinsic, extrinsic, rotation, translation = self.get_model_input()
-
+            
             cam_pam = {
                 'intrins': intrinsic,
                 'rots': rotation,
                 'trans': translation,
-                'post_rots': post_rots if len(post_rots.shape) == 4 else post_rots.unsqueeze(0),
+                'post_rots': post_rots if len(post_rots.shape) == 4 else post_rots.unsqueeze(0), 
                 'post_trans': post_trans if len(post_trans.shape) == 3 else post_trans.unsqueeze(0)
             }
 
 
             with torch.no_grad():
-
+                # The model predicts broken and solid lane lines as separate outputs
                 road, lane_broken, lane_solid, veh, ped, stop = self.bev_model(bev_imgs, cam_pam)
 
             lane = torch.max(lane_broken, lane_solid)
-
+                
             bev_logits = torch.cat([road, lane, ped, stop, veh], dim=1)
-            bev_prob = torch.sigmoid(bev_logits)
-            bev_binary_input = (bev_prob >= 0.5).float()
+            bev_prob = torch.sigmoid(bev_logits)                          
+            bev_binary_input = (bev_prob >= 0.5).float() # Shape: (1, 5, 200, 200)
 
-
+            # Split channels for the 7-channel RL input (order: road, lane, ped, stop, veh)
             road_b, lane_b, ped_b, stop_b, veh_b = torch.split(bev_binary_input, 1, dim=1)
 
             pred_veh_mask = (torch.sigmoid(veh) > 0.5).float().squeeze().cpu().numpy()
@@ -939,70 +949,73 @@ class CarlaRouteEnv(gym.Env):
 
             kernel_veh = np.ones((3, 3), np.uint8)
             veh_inflated = cv2.dilate(pred_veh_mask, kernel_veh, iterations=1)
-
-
-            kernel_ped = np.ones((5, 5), np.uint8)
+            
+            # Pedestrians are small and easy to miss, so inflate them more (5x5 kernel, ~1.0 m);
+            # point-like detections then become boxes that reliably block the path.
+            kernel_ped = np.ones((5, 5), np.uint8) 
             ped_inflated = cv2.dilate(pred_ped_mask, kernel_ped, iterations=1)
-
+            
             danger_mask = np.zeros((200, 200), dtype=np.uint8)
             danger_mask[veh_inflated > 0] = 255
             danger_mask[ped_inflated > 0] = 255
 
             if 'light_idx' in locals() and light_idx != 0:
-
+                # stop_b is already thresholded at 0.5
                 stop_np = stop_b.squeeze().cpu().numpy().astype(np.uint8)
-
-
-                kernel_stop = np.ones((3, 3), np.uint8)
-                stop_thick = cv2.dilate(stop_np, kernel_stop, iterations=2)
-
+                
+                # Thicken the stop line so the path cannot tunnel through it
+                kernel_stop = np.ones((3, 3), np.uint8) 
+                stop_thick = cv2.dilate(stop_np, kernel_stop, iterations=2) # more iterations -> thicker
+                
                 danger_mask[stop_thick > 0] = 255
-
-
-            kernel = np.ones((3, 3), np.uint8)
+            
+            # Dilate the danger mask for a safety margin
+            kernel = np.ones((3, 3), np.uint8) # smaller than 5x5 since the mask is predicted; tunable
             danger_mask = cv2.dilate(danger_mask, kernel, iterations=1)
 
-            ways_torch = self.get_way_v2()
-
-
+            ways_torch = self.get_way_v2() 
+            
+            # Collision check: ways_torch is in Renderer pixel coordinates (centered near 250),
+            # so shift by -150 to match the 200x200 model output.
             valid_len = len(ways_torch) if ways_torch is not None else 0
-
+            
             if ways_torch is not None and len(ways_torch) > 0:
-
+                # Shifted copy used only for the check
                 check_ways = ways_torch.clone()
-                check_ways -= 150.0
-
-
+                check_ways -= 150.0 # align to the 200x200 grid
+                
+                # Pixel-wise collision check -> valid prefix length
                 valid_len = self._check_path_collision_and_cut(check_ways, danger_mask)
 
                 self.valid_waypoint_len = valid_len
-
+                
                 ways_torch = ways_torch[:valid_len]
             else:
                 self.valid_waypoint_len = 0
 
             ego_img = np.zeros((200, 200), dtype=np.uint8)
-            rect_w, rect_h = 12, 25
+            rect_w, rect_h = 12, 25   
             center_x, center_y = 200 // 2, 200 // 2
             top_left = (center_x - rect_w // 2, center_y - rect_h // 2)
             bottom_right = (center_x + rect_w // 2, center_y + rect_h // 2)
-
+            
             cv2.rectangle(ego_img, top_left, bottom_right, 255, thickness=-1)
-
+            
             ego_mask = torch.zeros((1, 1, 200, 200), device='cuda')
             ego_mask[0, 0] = torch.tensor(ego_img, device='cuda', dtype=torch.float32) / 255.0
 
 
+            # --- C. Planning branch ---
             route_mask = torch.zeros((1, 1, 200, 200), device='cuda')
             route_img = np.zeros((200, 200), dtype=np.uint8)
 
             wp_vector = self.get_truncated_waypoints_state(max_points=7, ignore_obstacles=False)
-            self.predicted_waypoints_norm = wp_vector
-
-
+            self.predicted_waypoints_norm = wp_vector 
+                
+            # Draw the route mask from the already truncated ways_torch
             if ways_torch is not None and len(ways_torch) > 0:
                 ways_np = ways_torch.squeeze().cpu().numpy()
-
+                    
                 if ways_np.ndim == 1:
                     ways_np = ways_np[np.newaxis, :]
 
@@ -1013,25 +1026,27 @@ class CarlaRouteEnv(gym.Env):
                 cv2.polylines(route_img, [pts], isClosed=False, color=255, thickness=18)
 
 
+            
             route_mask[0, 0] = torch.tensor(route_img, device='cuda', dtype=torch.float32) / 255.0
 
-
+            # --- D. Final BEV assembly (channel layout must match training) ---
+            # Ego, Road, Lane, Ped, Veh, Stop, Route (all binary 0/1 masks)
             self.bev_image = torch.cat([ego_mask, road_b, lane_b, ped_b, veh_b, stop_b, route_mask], dim=1)
-
-
+            
+            # RGB visualization of the 7-channel BEV (for debugging)
             self.bev_image_vis = self._create_vis_image(self.bev_image[0].cpu().numpy().transpose(1,2,0))
 
 
-        if not self.success_state:
+        if not self.success_state: 
             final_waypoint_location = self.route_waypoints[-1][0].transform.location
             vehicle_location = self.vehicle.get_transform().location
             distance_to_final = vehicle_location.distance(final_waypoint_location)
             if distance_to_final <= 5.0:
                 self.success_state = True
-
+              
 
         self.viewer_image = self.front_cam_pv_rgb.img
-
+        
         transform = self.vehicle.get_transform()
         self.prev_waypoint_index = self.current_waypoint_index
         waypoint_index = self.current_waypoint_index
@@ -1073,6 +1088,9 @@ class CarlaRouteEnv(gym.Env):
         self.angle = angle_diff(wp_fwd, fwd)
 
 
+
+
+        # [EVALUATION] Projection-based Route Completion
         current_location_vec = vector(self.vehicle.get_transform().location)
         if self.current_waypoint_index < len(self.route_waypoints) - 1:
             p1 = vector(self.route_waypoints[self.current_waypoint_index][0].transform.location)
@@ -1086,13 +1104,13 @@ class CarlaRouteEnv(gym.Env):
             self.distance_traveled_on_route += distance_this_step
             self.last_projection_on_route = current_projection
 
-
+        # Heading angle (HAS)
         tr = self.vehicle.get_transform()
         heading_fwd = vector(tr.get_forward_vector())
         vec_to_next_wp = vector(self.next_waypoint.transform.location) - vector(tr.location)
         self.heading_angle = angle_diff(heading_fwd, vec_to_next_wp)
 
-
+        # Jerk
         current_speed_ms = self.speed / 3.6
         dt = 1.0 / self.fps
         current_acceleration = (current_speed_ms - self.previous_speed_ms) / dt
@@ -1107,11 +1125,12 @@ class CarlaRouteEnv(gym.Env):
             self.success_state = True
 
         self.distance_from_center_history.append(self.distance_from_center)
-
-
-        self.last_reward, _ = self.reward_fn(self)
-
-        if self.speed > 0.5:
+        
+        # [EVALUATION] Mean driving speed
+        # reward_fn returns (reward, info/flag)
+        self.last_reward, _ = self.reward_fn(self) 
+        # Only count steps where the vehicle is moving (speed > 0.5 km/h)
+        if self.speed > 0.5: 
              self.driving_speed += self.speed
              self.dirivng_speed_step += 1
         mean_driving_speed = (self.driving_speed / self.dirivng_speed_step) if self.dirivng_speed_step > 0 else 0.0
@@ -1121,13 +1140,13 @@ class CarlaRouteEnv(gym.Env):
         self.step_count += 1
         self.step_measurement += 1
 
-
+        # Previous-step state
         self.prev_steer = self.control.steer
         self.prev_throttle = self.control.throttle
         self.prev_brake = self.control.brake
         self.prev_jerk = self.current_jerk
         self.prev_speed = self.speed
-
+    
         self.prev_traffic_light_state = self.final_vector
         self.prev_dist_to_stop = self.dist_to_stop
 
@@ -1151,7 +1170,7 @@ class CarlaRouteEnv(gym.Env):
             raise ValueError("Observation contains nan or inf!")
         if np.isnan(self.last_reward) or np.isinf(self.last_reward):
             raise ValueError("Reward is nan or inf!")
-
+        
 
         if self.final_vector == [1, 0, 0, 0]:
             tl_str = "RED"
@@ -1160,7 +1179,8 @@ class CarlaRouteEnv(gym.Env):
         else:
             tl_str = "NONE"
 
-
+        # [Visual Log] Convert stop-line distance back to meters (0.0-1.0 -> 0-20 m);
+        # show 'Far' at >= 20 m or when there is no traffic light
         raw_dist = self.dist_to_stop * 20.0
         dist_str = "Far" if raw_dist >= 19.9 else f"{raw_dist:.1f}m"
 
@@ -1172,11 +1192,11 @@ class CarlaRouteEnv(gym.Env):
             'avg_speed': f"{(self.speed_accum / self.step_count):.2f}",
             'mean_reward': f"{(self.total_reward / self.step_count):.2f}",
             'route_completion': f"{(self.distance_traveled_wp / self.route_length):.2f}",
-            'Pred_TL': f"{tl_str}",
-            'Pred_Dist': f"{dist_str}"
+            'Pred_TL': f"{tl_str}",    # predicted traffic light (RED / GREEN / NONE)
+            'Pred_Dist': f"{dist_str}" # predicted stop-line distance (e.g. 12.5m)
         }
 
-
+        # [EVALUATION] Updated Info for eval.py
         info = {
             "closed": self.closed,
             'total_reward': self.total_reward,
@@ -1185,73 +1205,79 @@ class CarlaRouteEnv(gym.Env):
             'avg_center_dev': (self.center_lane_deviation / self.step_count),
             'avg_speed': (self.speed_accum / self.step_count),
             'mean_reward': (self.total_reward / self.step_count),
-
-            'route_completion': (self.distance_traveled_on_route / self.route_length),
+            # New metrics
+            'route_completion': (self.distance_traveled_on_route / self.route_length), # Precision Route
             'infraction_penalty': self.infraction_penalty,
             'mean_driving_speed': mean_driving_speed,
         }
 
         return encoded_state, self.last_reward, self.terminal_state or self.success_state, info
-
+    
     def _check_path_collision_and_cut(self, waypoints_tensor, danger_mask):
-
+        """
+        Check whether waypoints (BEV pixel coordinates) hit the danger mask
+        (obstacles) and return the valid prefix length.
+        """
         if waypoints_tensor is None or len(waypoints_tensor) == 0:
             return 0
-
+            
         pts = waypoints_tensor.squeeze(1).cpu().numpy().astype(np.int32)
-
+        
         h, w = danger_mask.shape
         valid_length = len(pts)
 
         for i in range(len(pts) - 1):
             p1 = pts[i]
             p2 = pts[i+1]
-
-
-            if not (0 <= p1[0] < w and 0 <= p1[1] < h):
+            
+            # Stop when leaving the grid
+            if not (0 <= p1[0] < w and 0 <= p1[1] < h): 
                 valid_length = i
                 break
-
+            
             dist = np.linalg.norm(p2 - p1)
             steps = max(1, int(dist))
-
+            
             collision_found = False
             for s in range(steps + 1):
                 t = s / steps
                 curr_x = int(p1[0] * (1-t) + p2[0] * t)
                 curr_y = int(p1[1] * (1-t) + p2[1] * t)
-
+                
                 if not (0 <= curr_x < w and 0 <= curr_y < h):
                     continue
-
+                
                 if danger_mask[curr_y, curr_x] > 0:
-                    valid_length = i + 1
+                    valid_length = i + 1 # valid up to here
                     collision_found = True
                     break
-
+            
             if collision_found:
                 break
-
+                
         return valid_length
-
+    
     def _preprocess_traffic_frame(self, img_bgr):
-
+        """
+        TrafficFormer input preprocessing.
+        Target Shape: (3, 512, 960) (C, H, W)
+        """
         img_rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
-
+        
         transform = transforms.Compose([
-            transforms.ToTensor(),
-            transforms.Resize((512, 960)),
-            transforms.Normalize(mean=[0.485, 0.456, 0.406],
+            transforms.ToTensor(),                
+            transforms.Resize((512, 960)),        
+            transforms.Normalize(mean=[0.485, 0.456, 0.406],  
                                  std=[0.229, 0.224, 0.225])
         ])
-
+        
         return transform(img_rgb)
-
-
+    
+    
     def get_traffic_light_vector(self, traffic_state, fail_prob=0.08, misclassify_prob=0.0217):
         if random.random() < fail_prob:
-            return [0, 0, 0, 1]
-
+            return [0, 0, 0, 1]  # [R, Y, G, None]
+        
         if traffic_state == carla.TrafficLightState.Green:
             correct_vector = [0, 0, 1, 0]
         elif traffic_state == carla.TrafficLightState.Yellow:
@@ -1266,30 +1292,30 @@ class CarlaRouteEnv(gym.Env):
             if correct_vector in possible_errors:
                 possible_errors.remove(correct_vector)
             return random.choice(possible_errors)
-
+        
         return correct_vector
-
-
+    
+    
     def _apply_stopline_noise(self, real_dist):
         if real_dist is None or real_dist < 0:
-            return 20.0
-
-        if random.random() < 0.20:
-            noise = random.uniform(2.0, 5.0)
-            if random.random() < 0.5: noise *= -1
-        else:
+            return 20.0 
+        
+        if random.random() < 0.20: 
+            noise = random.uniform(2.0, 5.0) 
+            if random.random() < 0.5: noise *= -1 
+        else: 
             noise = random.uniform(-0.3, 0.3)
-
+            
         noisy_dist = max(0.0, real_dist + noise)
         return noisy_dist / 20.0
-
-
+    
+    # [EVALUATION] Helper Methods
     def _record_infraction(self, infraction_type):
         penalty_multiplier = self.PENALTIES.get(infraction_type)
         if penalty_multiplier is None:
             print(f"Warning: no penalty defined in PENALTIES for '{infraction_type}'.")
             return
-
+        
         self.infraction_penalty *= penalty_multiplier
         self.infraction_history.append({
             'episode': self.episode_idx,
@@ -1318,13 +1344,13 @@ class CarlaRouteEnv(gym.Env):
         except Exception as e:
             print(f"Error saving infraction history: {e}")
 
-
+    # Local waypoint helpers
     def get_way_v2(self):
-
+        # Ego pose
         ego_pos_list =  [self.vehicle.get_transform().location.x, self.vehicle.get_transform().location.y]
         ego_yaw_list =  [self.vehicle.get_transform().rotation.yaw/180*np.pi]
 
-
+        # --- Part 1: Visualization Path (self.ways_bev) ---
         next_waypoints_state = self.route_waypoints[self.current_waypoint_index: self.current_waypoint_index + 15]
 
         if next_waypoints_state:
@@ -1341,15 +1367,15 @@ class CarlaRouteEnv(gym.Env):
                 ways_np = np.array(ways)
                 ways_torch = torch.tensor(ways_np, device='cuda', dtype=torch.float32).unsqueeze(1)
                 ego_pos_batched_torch = torch.tensor(ego_pos_batched, device='cuda', dtype=torch.float32).unsqueeze(1)
-                ego_yaw_batched_torch = torch.tensor(ego_yaw_batched, device='cuda', dtype=torch.float32).unsqueeze(1)
+                ego_yaw_batched_torch = torch.tensor(ego_yaw_batched, device='cuda', dtype=torch.float32).unsqueeze(1)   
                 ways_torch=self.renderer.world_to_pix_crop_batched(ways_torch, ego_pos_batched_torch, ego_yaw_batched_torch)
                 self.ways_bev = torch.cat([torch.tensor([[[250.0, 250.0]]], device=ways_torch.device), ways_torch], dim=0)
             else:
                 self.ways_bev = torch.tensor([[[250.0, 250.0]]], device='cuda', dtype=torch.float32)
         else:
             self.ways_bev = torch.tensor([[[250.0, 250.0]]], device='cuda', dtype=torch.float32)
-
-
+        
+        # --- Part 2: BEV Image Path (Return Value) ---
         upcoming_waypoints = self.local_planner._waypoints_queue
         max_len = self._calculate_dynamic_len(max_points=8)
 
@@ -1377,30 +1403,30 @@ class CarlaRouteEnv(gym.Env):
         ways_torch = torch.cat([torch.tensor([[[250.0, 250.0]]], device=ways_torch.device), ways_torch], dim=0)
 
         return ways_torch
-
+    
     def _calculate_dynamic_len(self, max_points=7):
         min_obstacle_distance = float('inf')
-
+        
         closest_walker, distance_walker = self._get_closest_hazardous_walker_v2()
         if closest_walker and distance_walker is not None:
             min_obstacle_distance = min(min_obstacle_distance, distance_walker)
-
+            
         npc_vehicle, npc_distance, _ = self._is_vehicle_hazard()
         if npc_vehicle and npc_distance is not None:
             min_obstacle_distance = min(min_obstacle_distance, npc_distance)
 
-
+        # Cap the length by the nearest obstacle distance
         final_len = max_points
         if min_obstacle_distance < float('inf'):
             obstacle_based_len = max(1, int(min_obstacle_distance))
             final_len = min(final_len, obstacle_based_len)
-
+            
         return final_len
-
+    
     def get_truncated_waypoints_state(self, max_points=8, ignore_obstacles=True):
-        MAX_WAYPOINT_DIST = 30.0
+        MAX_WAYPOINT_DIST = 30.0 
         upcoming_waypoints = self.local_planner._waypoints_queue
-
+        
         if ignore_obstacles:
             current_max_len = max_points
         else:
@@ -1414,39 +1440,39 @@ class CarlaRouteEnv(gym.Env):
         ego_loc = ego_transform.location
         ego_fwd = ego_transform.get_forward_vector()
         ego_right = ego_transform.get_right_vector()
-
+        
         iter_len = min(current_max_len, len(upcoming_waypoints))
-
+        
         for i in range(iter_len):
             wp_loc = upcoming_waypoints[i][0].transform.location
             vec_to_wp = wp_loc - ego_loc
-
-
+            
+            # Global to Local
             local_x = vec_to_wp.x * ego_fwd.x + vec_to_wp.y * ego_fwd.y + vec_to_wp.z * ego_fwd.z
             local_y = vec_to_wp.x * ego_right.x + vec_to_wp.y * ego_right.y + vec_to_wp.z * ego_right.z
-
+            
             norm_x = np.clip(local_x / MAX_WAYPOINT_DIST, -1.0, 1.0)
             norm_y = np.clip(local_y / MAX_WAYPOINT_DIST, -1.0, 1.0)
-
+            
             local_waypoints.extend([norm_x, norm_y])
-
+            
         target_len = max_points * 2
         if len(local_waypoints) < target_len:
             local_waypoints.extend([0.0] * (target_len - len(local_waypoints)))
-
+            
         return local_waypoints
-
+        
     def sigmoid_to_img(self,tensor):
         return (F.sigmoid(tensor).cpu().detach().numpy()[0, 0] * 255).astype(np.uint8)
 
     def get_model_input(self):
-
+        # The six BEVFormer cameras (order matters!)
         bev_camera_names = ['left_cam', 'front_cam', 'right_cam', 'rear_left_cam', 'rear_cam', 'rear_right_cam']
 
         rgb_images = []
         for cam_name in bev_camera_names:
-            attr_name = f"{cam_name}_rgb"
-
+            attr_name = f"{cam_name}_rgb" 
+            
             if hasattr(self, attr_name):
                 rgb_images.append(getattr(self, attr_name).img)
             else:
@@ -1461,22 +1487,22 @@ class CarlaRouteEnv(gym.Env):
             img = img[:, :, :3]
 
             img, post_rot, post_tran = img_transform(img, resize, resize_dims)
-
+            
             img = normalize_img(img)
-
+            
             imgs.append(img)
             post_rots.append(post_rot)
             post_trans.append(post_tran)
-
+            
         imgs = torch.stack(imgs).unsqueeze(0).cuda()
         post_rots = torch.stack(post_rots).unsqueeze(0).cuda()
         post_trans = torch.stack(post_trans).unsqueeze(0).cuda()
 
-
+        # Camera intrinsics/extrinsics in the same camera order
         intrinsic, extrinsic, rotation, translation = self.get_cam_para(bev_camera_names)
 
         return imgs, post_rots, post_trans, intrinsic, extrinsic, rotation, translation
-
+    
 
     def sample_augmentation(self):
 
@@ -1485,7 +1511,7 @@ class CarlaRouteEnv(gym.Env):
         resize = (fW / self.sensor_data['width'], fH / self.sensor_data['height'])
         resize_dims = (fW, fH)
         return resize, resize_dims
-
+    
     def get_cam_para(self, cam_names=None):
 
         if cam_names is None:
@@ -1495,21 +1521,21 @@ class CarlaRouteEnv(gym.Env):
             yaw = dof[5]
             rotation = Quaternion(scalar=np.cos(yaw / 2), vector=[0, 0, np.sin(yaw / 2)])
             rotation_matrix = rotation.rotation_matrix
-
-
+            
+            # Adapter matrix converting camera axes to the optical (image) frame
             adapter_matrix = np.array([
                 [0, 0, 1],
                 [-1, 0, 0],
                 [0, -1, 0]
             ])
             final_rotation = rotation_matrix @ adapter_matrix
-
+            
             translation = np.array(dof[:3])[:, None]
             cam_to_ego = np.vstack([
                 np.hstack((final_rotation, translation)),
                 np.array([0, 0, 0, 1])
             ])
-
+            # Return final_rotation (including the axis adapter)
             return cam_to_ego, final_rotation, translation
 
         extrinsic_list = []
@@ -1519,7 +1545,7 @@ class CarlaRouteEnv(gym.Env):
 
         for cam in cam_names:
             cam_dof = [
-                self.sensor_cfg[cam]['x'],
+                self.sensor_cfg[cam]['x'], 
                 self.sensor_cfg[cam]['y'],
                 self.sensor_cfg[cam]['z'],
                 self.sensor_cfg[cam]['pitch'],
@@ -1554,7 +1580,7 @@ class CarlaRouteEnv(gym.Env):
 
     def _on_collision(self, event):
         actor = event.other_actor
-        actor_type = actor.type_id
+        actor_type = actor.type_id 
 
         if get_actor_display_name(actor) != "Road":
             if actor_type.startswith("vehicle."):
@@ -1563,7 +1589,7 @@ class CarlaRouteEnv(gym.Env):
                 self.hit_true = True
             else:
                 self.terminal_state = True
-                self.collision_static = True
+                self.collision_static = True # [EVALUATION] Added for consistency
 
     def _draw_path(self, camera, images):
         image = images.copy()
@@ -1571,7 +1597,7 @@ class CarlaRouteEnv(gym.Env):
             Draw a connected path from start of route to end using homography.
         """
         vehicle_vector = vector(self.vehicle.get_transform().location)
-
+        # Get the world to camera matrix
         world_2_camera = np.array(camera.sensor.get_transform().get_inverse_matrix())
         image_w = int(camera.sensor.attributes['image_size_x'])
         image_h = int(camera.sensor.attributes['image_size_y'])
@@ -1581,7 +1607,7 @@ class CarlaRouteEnv(gym.Env):
             waypoint_vector = vector(waypoint_location)
             if not (2 < abs(np.linalg.norm(vehicle_vector - waypoint_vector)) < 50):
                 continue
-
+            # Calculate the camera projection matrix to project from 3D -> 2D
             K = build_projection_matrix(image_w, image_h, fov)
 
             image_point = get_image_point(waypoint_location, K, world_2_camera)
@@ -1591,7 +1617,7 @@ class CarlaRouteEnv(gym.Env):
 
                 if not (math.isfinite(x) and math.isfinite(y)):
                     continue
-
+                
                 if i == len(self.route_waypoints) - 1:
                     color = (255,0,0)
                 else:
@@ -1623,23 +1649,26 @@ class CarlaRouteEnv(gym.Env):
         return closest_idx
 
     def _is_vehicle_hazard(self):
-
+        """
+        Check all NPC vehicles and return the closest hazardous one as
+        (vehicle, distance, speed), or (None, None, None) if none is within 15 m.
+        """
         hazard_vehicles = []
 
         vehicle_list = [self.world.get_actor(id) for id in self.npc_vehicle_list]
-        vehicle_list = [v for v in vehicle_list if v is not None]
+        vehicle_list = [v for v in vehicle_list if v is not None] 
 
-
+        # Ego vehicle state
         ego_vehicle = self.vehicle
         ego_location = ego_vehicle.get_transform().location
         ego_velocity = ego_vehicle.get_velocity()
-        ego_yaw = ego_vehicle.get_transform().rotation.yaw
-
+        ego_yaw = ego_vehicle.get_transform().rotation.yaw  # heading (deg)
+        # Ego heading unit vector
         ego_orientation = np.array([np.cos(np.radians(ego_yaw)), np.sin(np.radians(ego_yaw))])
         ego_position = np.array([ego_location.x, ego_location.y])
-
+        # Hazard lookahead distance: at least 20 m or ~3 s of travel
         ego_speed_lookahead = max(20, 3.0 * np.linalg.norm([ego_velocity.x, ego_velocity.y]))
-        ego_wp = self.world.get_map().get_waypoint(ego_location)
+        ego_wp = self.world.get_map().get_waypoint(ego_location) 
 
         for target_vehicle in vehicle_list:
             if target_vehicle.id == ego_vehicle.id:
@@ -1650,6 +1679,7 @@ class CarlaRouteEnv(gym.Env):
             npc_wp = self.world.get_map().get_waypoint(npc_location)
 
 
+            # Ignore vehicles on another road or driving in the opposite lane direction
             if npc_wp.road_id != ego_wp.road_id or npc_wp.lane_id * ego_wp.lane_id < 0:
                 continue
 
@@ -1660,27 +1690,27 @@ class CarlaRouteEnv(gym.Env):
             distance = np.linalg.norm(relative_position)
             direction_to_npc = relative_position / (distance + 1e-4)
 
-
+            # Check NPC speed
             velocity = target_vehicle.get_velocity()
             speed_ms = np.sqrt(velocity.x**2 + velocity.y**2 + velocity.z**2)
 
-
+            # Bearing from ego heading to the NPC, and angle between the two headings
             angle_to_npc = np.degrees(np.arccos(np.clip(np.dot(ego_orientation, direction_to_npc), -1.0, 1.0)))
             angle_between_headings = np.degrees(np.arccos(np.clip(np.dot(ego_orientation, npc_orientation), -1.0, 1.0)))
 
-
+            # Hazard conditions
             if angle_between_headings > 60.0 and not (angle_to_npc < 15 and distance < ego_speed_lookahead):
-                continue
+                continue  # heading too different
             elif angle_to_npc > 30.0:
-                continue
+                continue  # too far to the side
             elif distance > ego_speed_lookahead:
-                continue
+                continue  # too far away
 
             hazard_vehicles.append((distance, target_vehicle, speed_ms))
-
+        
         if not hazard_vehicles:
             return None, None, None
-
+        
         hazard_vehicles.sort(key=lambda x: x[0])
 
         closest_distance = hazard_vehicles[0][0]
@@ -1688,13 +1718,17 @@ class CarlaRouteEnv(gym.Env):
         closest_vehicle_speed = hazard_vehicles[0][2]
 
 
+        # Only report hazards within 15 m
         if closest_distance <= 15.0:
             return closest_vehicle, closest_distance, closest_vehicle_speed
         else:
             return None, None, None
-
+        
     def _get_closest_hazardous_walker_v2(self):
-
+        """
+        Return the closest hazardous walker and its distance (within 15 m).
+        Only walkers on a driving lane (carla.LaneType.Driving) count as hazardous.
+        """
         closest_walker = None
         min_distance = 15.0
         ego_location = self.vehicle.get_location()
@@ -1710,7 +1744,7 @@ class CarlaRouteEnv(gym.Env):
 
             walker_location = walker.get_location()
             distance = ego_location.distance(walker_location)
-
+            
             if distance <= min_distance:
                 waypoint = carla_map.get_waypoint(walker_location, project_to_road=False, lane_type=carla.LaneType.Any)
 
@@ -1719,7 +1753,7 @@ class CarlaRouteEnv(gym.Env):
                     if distance < min_distance:
                         min_distance = distance
                         closest_walker = walker
-
+        
         return closest_walker, min_distance if closest_walker else None
 
     def get_right_turn_indicator(self, max_points=7):
@@ -1731,23 +1765,26 @@ class CarlaRouteEnv(gym.Env):
         return False
 
     def get_dynamic_target_speed(self):
-
+        """
+        Return the speed limit (km/h) of the road at the vehicle's location,
+        or None if there is none.
+        """
         speed_limit = self.vehicle.get_speed_limit()
         if speed_limit > 0:
             return speed_limit
         else:
             return None
 
-
+        
     def _cleanup_vehicles(self):
         print("--- [DEBUG] Starting _cleanup_vehicles ---")
         destroy_commands = []
 
         for actor_id in self.npc_vehicle_list:
             destroy_commands.append(carla.command.DestroyActor(actor_id))
-
+        
         if destroy_commands:
-            self.client.apply_batch_sync(destroy_commands, True)
+            self.client.apply_batch_sync(destroy_commands, True)    
             self._tick_safe()
 
         self.npc_vehicle_list.clear()
@@ -1758,12 +1795,12 @@ class CarlaRouteEnv(gym.Env):
 
         destroy_commands = []
 
-
+        # Iterate over a copy of the tracked controller list
         for controller in self.controller_actors[:]:
-
+        
             if not controller or not controller.is_alive:
                 continue
-
+            
             try:
                 controller.stop()
             except Exception as e:
@@ -1794,7 +1831,10 @@ class CarlaRouteEnv(gym.Env):
         print("="*60 + "\n")
 
     def _verify_and_force_cleanup_walkers(self):
-
+        """
+        Compare walker and controller counts in the world; on mismatch, force-destroy
+        all walkers and controllers.
+        """
         walkers = self.world.get_actors().filter('*.walker.pedestrian.*')
         controllers = self.world.get_actors().filter('*.controller.ai.walker.*')
 
@@ -1802,21 +1842,21 @@ class CarlaRouteEnv(gym.Env):
             return
 
         print(f"!! Walker/Controller mismatch detected ({len(walkers)}/{len(controllers)}). Forcing cleanup...")
-
+    
         destroy_commands = []
         for controller in controllers:
             controller.stop()
             destroy_commands.append(carla.command.DestroyActor(controller.id))
         for walker in walkers:
             destroy_commands.append(carla.command.DestroyActor(walker.id))
-
+    
         if destroy_commands:
             self.client.apply_batch_sync(destroy_commands, True)
             time.sleep(0.5)
             self._tick_safe()
 
     def _spawn_vehicles(self):
-
+        # Spawn NPCs more than 5 m away from the ego vehicle
         available_spawn_points = [p for p in self.vehicle_spawn_points if p.location.distance(self.previous_location) > 5]
         random.shuffle(available_spawn_points)
 
@@ -1828,7 +1868,7 @@ class CarlaRouteEnv(gym.Env):
             vehicle_batch.append(carla.command.SpawnActor(bp, transform).then(
                  carla.command.SetAutopilot(carla.command.FutureActor, True, self.traffic_manager.get_port())
             ))
-
+        
         vehicle_results = self.client.apply_batch_sync(vehicle_batch, True)
         self._tick_safe()
 
@@ -1854,37 +1894,39 @@ class CarlaRouteEnv(gym.Env):
         for r in vehicle_results:
             if r.error:
                 print(f"Failed to spawn vehicle. Reason: {r.error}")
-
+        
         print(f"Successfully spawned {len(new_vehicle_ids)} vehicles.")
 
     def _is_valid_blueprint(self, blueprint):
-
+        """
+        Filter out unwanted vehicle blueprints (e.g. bicycles).
+        """
         bp_id = blueprint.id
-
-
+        
+        # Blacklist: CARLA built-in bicycles
         bicycle_blacklist = [
-            'vehicle.bh.crossbike',
-            'vehicle.diamondback.century',
-            'vehicle.gazelle.omafiets',
+            'vehicle.bh.crossbike',       # mountain bike
+            'vehicle.diamondback.century',# road bike
+            'vehicle.gazelle.omafiets',   # city bike
         ]
 
-        if bp_id in bicycle_blacklist:
+        if bp_id in bicycle_blacklist: 
             return False
-
-
+         
+        # Keep only blueprints with a base_type (cars, trucks, ...)
         if not blueprint.has_attribute('base_type'):
             return False
-
+            
         return True
-
+ 
     def _spawn_walkers_v2(self):
         if not self.successful_spawn_location or len(self.successful_spawn_location) < self.num_walkers:
             raise ValueError("Not enough cached walker spawn locations. Run the cache-generation step first.")
-
-
+        
+        # Spawn in small batches
         walker_ids = []
-        batch_size = 10
-
+        batch_size = 10  # walkers per batch
+    
         for i in range(0, self.num_walkers, batch_size):
             walker_batch = []
             for bp, location in zip(self.walker_bp[i:i+batch_size], self.successful_spawn_location[i:i+batch_size]):
@@ -1898,7 +1940,7 @@ class CarlaRouteEnv(gym.Env):
             print(f"Spawning walker batch {i//batch_size + 1}...")
             walker_results = self.client.apply_batch_sync(walker_batch, True)
             self._tick_safe()
-
+        
             for r in walker_results:
                 if r.error:
                     print(f"Failed to spawn walker. Reason: {r.error}")
@@ -1911,7 +1953,7 @@ class CarlaRouteEnv(gym.Env):
         controller_batch = [carla.command.SpawnActor(self.controller_bp, carla.Transform(), parent_id) for parent_id in walker_ids]
         print("controller spawn command")
         controller_results = self.client.apply_batch_sync(controller_batch, True)
-        self._tick_safe()
+        self._tick_safe() 
 
         for r in controller_results:
             if r.error:
@@ -1926,7 +1968,7 @@ class CarlaRouteEnv(gym.Env):
             destination = self.world.get_random_location_from_navigation()
             controller.go_to_location(self.world.get_random_location_from_navigation())
             self.walker_destinations[controller.id] = destination
-            controller.set_max_speed(1 + random.random())
+            controller.set_max_speed(1 + random.random()) # 1-2 m/s
 
         time.sleep(0.1)
         self.world.tick()
@@ -1940,7 +1982,7 @@ class CarlaRouteEnv(gym.Env):
             walkers_to_spawn = self.num_walkers - len(self.successful_spawn_location)
 
             self.pedestrian_batch = []
-            spawn_points_this_loop = []
+            spawn_points_this_loop = [] # spawn points tried in this loop
 
             for _ in range(walkers_to_spawn):
                 spawn_point = carla.Transform()
@@ -1957,29 +1999,31 @@ class CarlaRouteEnv(gym.Env):
                 self._tick_safe()
                 continue
 
-            pedestrian_results = self.client.apply_batch_sync(self.pedestrian_batch, True)
+            pedestrian_results = self.client.apply_batch_sync(self.pedestrian_batch, True)    
             self._tick_safe()
-
+            
             temp_actor_ids = []
             for i, r in enumerate(pedestrian_results):
                 if not r.error:
                     self.successful_spawn_location.append(spawn_points_this_loop[i])
                     temp_actor_ids.append(r.actor_id)
-
+            
             if temp_actor_ids:
                 print(f"{len(temp_actor_ids)} locations found. Total so far: {len(self.successful_spawn_location)}.")
-
+                # Collect the temporary actor IDs from this loop
                 all_temp_actor_ids.extend(temp_actor_ids)
 
-
+        
+        
+        # After the loop, destroy all temporary walkers at once
         if all_temp_actor_ids:
             print(f"Cleaning up {len(all_temp_actor_ids)} temporary walkers.")
             destroy_commands = [carla.command.DestroyActor(actor_id) for actor_id in all_temp_actor_ids]
             self.client.apply_batch_sync(destroy_commands, True)
         self._tick_safe()
+        
 
-
-        print("Walker spawn location cache created.")
+        print("Walker spawn location cache created.")  
 
     def _retask_walkers(self):
         for controller in self.controller_actors:
@@ -1989,7 +2033,7 @@ class CarlaRouteEnv(gym.Env):
             walker = controller.parent
             if not walker or not walker.is_alive:
                 continue
-
+        
             current_location = walker.get_location()
             target_destination = self.walker_destinations.get(controller.id)
 
@@ -2000,20 +2044,20 @@ class CarlaRouteEnv(gym.Env):
                     self.walker_destinations[controller.id] = new_destination
                     print(f"Retasked walker {walker.id} to new destination.")
                 else:
-                    print(f"Failed to get a new destination for walker {walker.id}.")
-
+                    print(f"Failed to get a new destination for walker {walker.id}.") 
+    
     def _create_vis_image(self, bev_stack):
         h, w, _ = bev_stack.shape
         vis_img = np.zeros((h, w, 3), dtype=np.uint8)
-        vis_img[bev_stack[:,:,1] > 0] = (60, 60, 60)
-        vis_img[bev_stack[:,:,2] > 0] = (0, 255, 0)
-        vis_img[bev_stack[:,:,5] > 0] = (200, 200, 200)
-        vis_img[bev_stack[:,:,6] > 0] = (180, 180, 180)
-        vis_img[bev_stack[:,:,4] > 0] = (0, 255, 255)
-        vis_img[bev_stack[:,:,3] > 0] = (255, 0, 255)
-        vis_img[bev_stack[:,:,0] > 0] = (255, 255, 255)
+        vis_img[bev_stack[:,:,1] > 0] = (60, 60, 60)       # DAS
+        vis_img[bev_stack[:,:,2] > 0] = (0, 255, 0)        # Lane
+        vis_img[bev_stack[:,:,5] > 0] = (200, 200, 200)    # Stopline
+        vis_img[bev_stack[:,:,6] > 0] = (180, 180, 180)    # Route
+        vis_img[bev_stack[:,:,4] > 0] = (0, 255, 255)      # Vehicle
+        vis_img[bev_stack[:,:,3] > 0] = (255, 0, 255)      # Walker
+        vis_img[bev_stack[:,:,0] > 0] = (255, 255, 255)    # Ego Car
         return vis_img
-
+ 
     def _tick_safe(self):
         try:
             time.sleep(0.5)
@@ -2069,14 +2113,14 @@ def make_vehicle_bev_ego_aligned(
     c0 = out_size / 2.0
 
     ex, ey = data['x'], data['y']
-    cy = data['yaw']
+    cy = data['yaw']  # rad
     c = math.cos(cy)
     s = math.sin(cy)
 
     for npc in npc_agents:
-        nx, ny, nyaw, nlen_m, nwid_m = npc
+        nx, ny, nyaw, nlen_m, nwid_m = npc  # length/width in meters
 
-
+        # per-vehicle size in pixels
         car_len_px = max(1, int(round(nlen_m / out_mpp)))
         car_wid_px = max(1, int(round(nwid_m / out_mpp)))
         hl = car_len_px * 0.5
@@ -2085,7 +2129,7 @@ def make_vehicle_bev_ego_aligned(
         dx = nx - ex
         dy = ny - ey
 
-
+        # ego frame: forward=f, right=r
         f =  c * dx + s * dy
         r = -s * dx + c * dy
 
@@ -2115,7 +2159,7 @@ def make_ped_bev_ego_aligned(data, ped_agents,
     c = math.cos(cy)
     s = math.sin(cy)
 
-    half = box_px // 2
+    half = box_px // 2  # 3 -> 1
 
     for ped in ped_agents:
         px, py = ped[0], ped[1]
@@ -2123,21 +2167,21 @@ def make_ped_bev_ego_aligned(data, ped_agents,
         dx = px - ex
         dy = py - ey
 
-
+        # ego frame: forward=f, right=r
         f =  c * dx + s * dy
         r = -s * dx + c * dy
 
         ox = c0 + (r / out_mpp)
         oy = c0 - (f / out_mpp)
 
-
+        # Skip if out of bounds (small margin)
         if ox < -2 or ox > out_size + 2 or oy < -2 or oy > out_size + 2:
             continue
 
         ix = int(round(ox))
         iy = int(round(oy))
 
-
+        # Draw a 3x3 box (clipped)
         x0 = max(0, ix - half)
         x1 = min(out_size, ix + half + 1)
         y0 = max(0, iy - half)
@@ -2153,18 +2197,22 @@ def world_to_pixel(x, y, OFFSET_X, OFFSET_Y, pixels_per_meter):
     return int(px), int(py)
 
 OUT_SIZE = 500
-ANGLE_BIAS_DEG = 90.0
+ANGLE_BIAS_DEG = 90.0          # if heading is rotated 90/180 deg, try 0, +90, -90
 
 c0 = (OUT_SIZE - 1) / 2.0
 u = np.arange(OUT_SIZE, dtype=np.float32)
 v = np.arange(OUT_SIZE, dtype=np.float32)
-uu, vv = np.meshgrid(u, v)
+uu, vv = np.meshgrid(u, v)          # (H,W)
 DU = uu - c0
 DV = vv - c0
 
 
 def crop_yaw_nn(img_u8, center_px, yaw_deg, angle_bias_deg=ANGLE_BIAS_DEG, fill=0):
-
+    """
+    Crop an OUT_SIZE x OUT_SIZE patch from the global map img_u8, centered at
+    center_px and rotated so that yaw points up (forward), using nearest-neighbor
+    sampling (no blur).
+    """
     if img_u8 is None:
         return None
 
@@ -2175,7 +2223,7 @@ def crop_yaw_nn(img_u8, center_px, yaw_deg, angle_bias_deg=ANGLE_BIAS_DEG, fill=
     ct = math.cos(theta)
     st = math.sin(theta)
 
-
+    # inverse mapping: output (DU,DV) -> global (xg,yg)
     xg = cx + (DU * ct - DV * st)
     yg = cy + (DU * st + DV * ct)
 

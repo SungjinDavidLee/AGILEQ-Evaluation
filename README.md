@@ -1,76 +1,117 @@
-# AGILEQ-Evaluation
+# AGILE-Q evaluation
 
-[한국어](README_ko.md) · [Training](https://github.com/SungjinDavidLee/AGILEQ-Training/tree/main/AGILEQ-train)
+This repository evaluates a trained AGILE-Q (CrossQ) driving policy in CARLA 0.9.15. The policy does not see ground truth: its BEV input comes from BEVFormer predictions (`best_bev_model.pth`) and its traffic-light input comes from TLCFormer (`best_traffic_model.pth`).
 
-CARLA evaluation code from `AGILE-Q-eval`. It evaluates reinforcement-learning driving policies with BEVFormer perception from surround-view cameras and traffic-light perception from front-camera sequences. Code is located at the repository root.
+Training code: AGILE-Q-train.
 
-## Contents
-
-| Path | Purpose |
-| --- | --- |
-| `eval.py` | Load a policy, evaluate driving episodes, and save results. |
-| `eval_plots.py` | Summarize evaluation CSV files and provide plotting helpers. |
-| `run_experiments.py` | Evaluate selected checkpoints across towns. |
-| `config.py`, `crossq_pp/` | Algorithm settings and CrossQ++ implementation. |
-| `carla_env/envs/carla_FixedRoute_env.py` | Environment selected by `eval.py`. |
-| `carla_env/envs/carla_RandomRoute_env_traffic.py` | Additional random-route environment implementation. |
-| `carla_env/envs/perception_models/` | BEVFormer, traffic-light model, InternImage configuration, and extension sources. |
-| `BEV/` | Map rendering utilities and map assets. |
-| `environment_agileq_eval.yml` | Exported Conda environment. |
-
-## Setup
-
-Run commands from the repository root. Use Linux, CARLA 0.9.15 with the required towns, an NVIDIA GPU, and a CUDA toolkit/compiler compatible with PyTorch. The supplied environment uses Python 3.9 and PyTorch 2.7 with CUDA 12.8 packages; inference selects CUDA directly.
+## Requirements
+- CARLA 0.9.15
+- An NVIDIA GPU with CUDA
+- Conda
 
 ```bash
-conda env create -n agileq_eval -f environment_agileq_eval.yml
+conda env create -f environment_agileq_eval.yml
 conda activate agileq_eval
-export CARLA_ROOT=/absolute/path/to/CARLA_0.9.15
+export CARLA_ROOT=/path/to/CARLA_0.9.15
 ```
+The env launches CARLA from `$CARLA_ROOT` itself.
 
-The YAML contains platform-specific builds and CUDA wheel versions. Adjust package sources or versions for your machine if those builds are unavailable. `sb3_contrib` must expose `CrossQ` and `BatchRenorm1d`.
+## Model weights
 
-Build both extension packages inside the activated environment:
+Download the model archive from [Google Drive](https://drive.google.com/file/d/1nC7NmAk6vBsQcedpB-zmNv05dSJVbUGO/view?usp=sharing), then extract it locally.
 
-```bash
-(cd carla_env/envs/perception_models/models/ops_dcnv3 && bash make.sh)
-(cd carla_env/envs/perception_models/ops && bash make.sh)
-```
+Copy the `.pth` files directly into the repository root, **next to `eval.py`**. If extraction creates an extra enclosing folder, copy the files out of that folder; the evaluation code reads the filenames below from its working directory. Run evaluation commands from the repository root.
 
-The sources for DCNv3 and multi-scale deformable attention are included; compiled binaries are not. The InternImage configuration used by `get_config_t()` is bundled as `carla_env/envs/perception_models/internimage_t_1k_224.yaml`.
+| File | Location after extraction | Used by |
+|---|---|---|
+| `best_bev_model.pth` | `AGILEQ-Evaluation/best_bev_model.pth` | `eval.py` and the bypass demo (BEVFormer) |
+| `best_traffic_model.pth` | `AGILEQ-Evaluation/best_traffic_model.pth` | `eval.py` and the bypass demo (TLCFormer) |
+| `best_bev_model_v2.pth` | `AGILEQ-Evaluation/best_bev_model_v2.pth` | `carla_RandomRoute_env_traffic.py`, if used |
+| `best_traffic_model_v2.pth` | `AGILEQ-Evaluation/best_traffic_model_v2.pth` | `carla_RandomRoute_env_traffic.py`, if used |
 
-## Required checkpoints
+Only the first two files are required by the default `eval.py` entrypoint. The perception weights are distributed through Google Drive; `git lfs pull` is not required to obtain them.
 
-| File | Purpose |
-| --- | --- |
-| `/absolute/path/to/run/model_100000_steps.zip` | Trained driving policy, supplied through `--model`. |
-| `./best_bev_model.pth` | BEVFormer weights loaded by the evaluation environment. |
-| `./best_traffic_model.pth` | Traffic-light model weights loaded by the evaluation environment. |
+If the archive also contains an `ieee_results/` directory, copy that directory into the repository root **with its subdirectories intact**. The `.pth` perception weights and the policy `.zip` used by `--model` are separate files. If the archive contains only `.pth` files, provide a trained policy `.zip` separately.
 
-Weights are not included. Put the perception checkpoints in the repository root or update their loading paths in the environment. Checkpoint architectures and the policy observation space must match this code. EfficientNet initialization may also download pretrained backbone weights if they are not cached.
+## Policy weights
+The evaluation examples expect pre-trained AGILE-Q-C2 policies under `ieee_results/AGILE-Q-C2/`. Place your downloaded policy files there, or pass another policy `.zip` path with `--model`:
+- `v1`: AGILE-Q-C2 before the red-light right-turn case (`--config crossq`, state without `right_turn_indicator` and `bypass_indicator`)
+- `v2`: AGILE-Q-C2 that also covers the red-light right-turn case (`--config crossq_pp`)
+- `v3`: v2 plus the bypass case (Town05), the stronger general driver of v3 / v4
+- `v4`: v3 fine-tuned for bypass with the route handling below, the stronger bypass policy of v3 / v4
 
 ## Evaluate
-
 ```bash
-python eval.py \
-  --config crossq_pp \
-  --model /absolute/path/to/run/model_100000_steps.zip \
-  --town town01 \
-  --port 2000 \
-  --no_render \
-  --no_record_video
+# one town
+python eval.py --config crossq_pp --model ieee_results/AGILE-Q-C2/v2/best_model.zip --town town01
+
+# custom route: spawn-point index or x,y,z[,yaw]
+python eval.py --config crossq_pp --model ieee_results/AGILE-Q-C2/v2/best_model.zip --town town04 \
+    --start 116.77,228.87,0.3,-25.73 --dest 289.2,163.0,0.3
+
+# all towns
+python run_experiments.py
 ```
+Outputs:
+- `eval_<town>/` next to the model file: per-episode CSV, summary CSV and video
+- `results/`: terminal-reason statistics
 
-Use the configuration matching the policy: `PPO`, `SAC`, `DDPG`, `TD3`, `TQC`, `crossq`, or `crossq_pp`. The environment starts CARLA using `CARLA_ROOT/CarlaUE4.sh`.
+### Route handling (off by default)
+Two class attributes of `CarlaRouteEnv` in `carla_env/envs/carla_FixedRoute_env.py` match the route handling used to train v4:
+- `SMOOTH_LANE_CHANGES = False`: the route planner encodes a lane change as a 3.5–7 m jump between two 1 m waypoints, which ends an episode as off-track in multi-lane towns. Set to `True` to turn each jump into a gradual lane change (`carla_env/navigation/route_smoothing.py`) and to start the ego on the first route waypoint.
+- `ROUTE_EXTEND_M = 0`: set to 20 to continue the route past the destination, so the guidance corridor does not end before the goal. Success and route completion still use the destination.
 
-`--no_render` disables the environment display; `--no_record_video` disables AVI recording. To specify a route, supply both `--start` and `--dest`, using spawn-point indices or comma-separated coordinates, for example `--start 175 --dest 42`. The loop in `eval.py` currently runs 21 episodes. `--iteration` labels the infraction-history output; it does not change the episode count.
+The defaults keep the evaluation setting of the paper. Set both (`True`, 20) to evaluate v4.
 
-Town names must match `BEV/` directories exactly: `town01`, `town02`, `town03`, `town04`, `town05`, `town07`, and `Town10HD_Opt`. Corresponding CARLA maps must be installed.
+## State
+The state list is `states["test"]` in `config.py`. It must match the state the policy was trained with.
 
-For batch evaluation, edit `run_experiments.py`: set `CARLA_ROOT`, the checkpoint path, towns, and configurations before running it. The script terminates CARLA server processes between runs. The random-route implementation is included separately; the current entry point imports the fixed-route environment.
+| Token | Content |
+|---|---|
+| A: ego | steer, throttle, brake, speed, jerk, right-turn indicator, bypass indicator (optional) |
+| B: BEV | 7 channels: ego, drivable area, lane, pedestrian, vehicle, stop line, truncated route |
+| C: waypoints | 7 truncated route waypoints (T_wp) |
+| D: traffic light | TLC state (4), stop-line distance |
+| E: previous step | previous ego and traffic state |
 
-## Results
+## Bypass (off by default)
+`carla_env/bypass/plan_bypass.py` implements the bypass of the High-Level Waypoint Guidance (Algorithm 1 of the paper):
+- **G**: route waypoints truncated by the obstacle mask
+- **F**: frozen bypass path into the neighbour lane and back, generated by `plan_bypass(METHOD, ...)` (`METHOD`: frenet, lattice, astar, rrtstar, qp, nmpc, mppi; default frenet)
+  - Its first waypoints (1 m apart) are truncated by the same obstacle mask, so the policy stops if the bypass path becomes blocked.
+  - F ends when the ego reaches the end of the bypass path.
 
-Per-step CSV files and optional AVI videos are saved beside the policy checkpoint under `eval_<town>/`. CSV data includes controls, vehicle pose, route points, reward, speed, center deviation, route completion, and infraction penalty. `summary_eval()` creates summary output, and the environment saves infraction history and terminal statistics.
+A bypass starts when both conditions hold:
+- **The route is blocked**: the guidance waypoints Psi_T (up to 8 route waypoints, 1 m apart) are cut by the obstacle mask (k < |Psi_T|), the light is not red, and the ego speed is below 5 km/h, all for 3 s.
+  - The obstacle mask holds vehicles and pedestrians, plus the stop line when the light is red and the ego is not turning right.
+- **The lane change is legal and safe**: it is allowed by the map, and the rear zone of the target lane has no vehicle in the vehicle channel. The rear zone (`REAR_CHECK_M` = 15 m behind the ego) is Omega_LR for a left bypass and Omega_RR for a right bypass (`SIDE`; only the left bypass path is implemented).
 
-Python comments and docstrings are removed, with third-party header notices preserved in [THIRD_PARTY_NOTICES.txt](THIRD_PARTY_NOTICES.txt). Python syntax and preservation of executable statements were checked during import. CUDA compilation and CARLA evaluation have not been run as part of this repository update.
+Switches (class attributes of `PlanBypass` in `carla_env/bypass/plan_bypass.py`):
+- `ENABLED = False`: set to `True` to enable the bypass.
+- `OVERRIDE_ACTIONS = False`: set to `True` to brake above `F_SPEED_CAP_KMH` (6 km/h) in F. This is for policies that were not trained for bypassing. Our bypass demo used it (`bypass_experiment/`).
+
+To learn the bypass, train on a multi-lane town (e.g. Town05) with the bypass enabled in AGILE-Q-train.
+
+### Stationary vehicles for bypass evaluation (off by default)
+`carla_env/bypass/bypass_scenario.py` (`BypassScenario.ENABLED = False`; only in Town03, Town04 and Town05) places stationary vehicles on the evaluation route, 30–40 m ahead of the ego, where a left lane change is legal (same rule as in training, up to 3 per episode; a vehicle is removed after the ego has waited behind it for `VANISH_S` = 20 s without a bypass). The episode CSV also has the bypass mode and the per-episode bypass counts (`bypass_spawned`, `bypass_triggers`, `bypass_entries`, `bypass_success`, `bypass_fail`, `bypass_vanished`, `bypass_stop_gap`). Enable `PlanBypass` as well to let the ego bypass them.
+
+`states["test"]` includes `"bypass_indicator"` because the released policy was trained with it. The indicator stays `[0, 1]` while the bypass is disabled.
+
+`bypass_experiment/` reproduces the bypass demo with a separate, tuned setup. See its README.
+
+### Implementation notes
+The code is still being tested and updated, and the paper does not describe every implementation detail, so some parts differ slightly from the paper:
+- During training, a yellow light also blocks the trigger. TLCFormer at evaluation merges red and yellow.
+- Lane-change legality is checked over the whole bypass (up to `LEGAL_LOOKAHEAD_M` = 50 m), not only over Psi_T.
+- Before F starts, the swept ego footprint along the path, the landing footprint and the curvature / lateral-acceleration limits are also checked.
+- The rejoin point is not a fixed D_bp: it is found from the obstacle mask (end of the obstacle + half the ego length + 1 m), and the planner chooses the landing within 25 m after that.
+- F ends when the ego is past the landing point and within 0.5 m of the route, or near the end of the bypass path.
+- `bypass_indicator` is part of the ego token, next to `right_turn_indicator`.
+- In F, the steering rate limit is anchored on the last applied steer instead of the route PID steer.
+- BYPASSFEASIBLE checks only the rear zone on the bypass side (Omega_LR for a left bypass, Omega_RR for a right bypass), not both zones.
+- Reward constants differ slightly from the paper: V_maxdiff is 10 m/s (36 km/h, paper 30 km/h) and sigma_max is 0.35 (paper 0.4). D_maxct is 2.0 m as in the paper, but the released policies were trained with 1.8 m (lane-centre reward and off-track limit).
+- For bypass training, R_vel^N was retuned after the paper results: D_maxnpc = max(9 m, 2 s · V_ego) (paper 20 m), w_n = w_d = 0.5 (paper 0.4 / 0.6), and a leading vehicle counts within max(10 m, 3 s · V_ego) (previously 20 m). The released policies v1 and v2 were trained with the paper values.
+- Route handling options (lane-change smoothing, start on the route, extension past the destination) are not part of the paper; they are off by default here.
+
+### Known limitation
+If the route ends shortly after the blocking vehicle (less than about 10 m past its front), there is no room to return to the route, so no bypass path is found. The ego waits behind the vehicle until the 60 s timeout.

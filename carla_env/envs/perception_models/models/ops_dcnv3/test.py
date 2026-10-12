@@ -1,3 +1,9 @@
+# --------------------------------------------------------
+# InternImage
+# Copyright (c) 2022 OpenGVLab
+# Licensed under The MIT License [see LICENSE for details]
+# --------------------------------------------------------
+
 from __future__ import absolute_import
 from __future__ import print_function
 from __future__ import division
@@ -86,7 +92,7 @@ def check_forward_equal_with_pytorch_float():
 
 
 def check_backward_equal_with_pytorch_double(channels=4, grad_input=True, grad_offset=True, grad_mask=True):
-
+    # H_in, W_in = 4, 4
     N = 2
     M = 2
     H_out = (H_in + 2 * pad - (dilation * (Kh - 1) + 1)) // stride + 1
@@ -149,7 +155,7 @@ def check_backward_equal_with_pytorch_double(channels=4, grad_input=True, grad_o
 
 
 def check_backward_equal_with_pytorch_float(channels=4, grad_input=True, grad_offset=True, grad_mask=True):
-
+    # H_in, W_in = 4, 4
     N = 2
     M = 2
     H_out = (H_in + 2 * pad - (dilation * (Kh - 1) + 1)) // stride + 1

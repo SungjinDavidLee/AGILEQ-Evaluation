@@ -1,3 +1,4 @@
+
 import torch
 from torch import nn
 import torch.nn.functional as F
@@ -10,7 +11,7 @@ from .models import build_model
 
 
 scene_centroid_x = 0.0
-scene_centroid_y = 1.0
+scene_centroid_y = 1.0 # down 1 meter
 scene_centroid_z = 0.0
 
 scene_centroid_py = np.array([scene_centroid_x,
@@ -43,7 +44,7 @@ def unpack_seqdim(tensor, B):
     tensor = torch.reshape(tensor, [B,S]+otherdims)
     return tensor
 def split_intrinsics(K):
-
+    # K is B x 3 x 3 or B x 4 x 4
     fx = K[:,0,0]
     fy = K[:,1,1]
     x0 = K[:,0,2]
@@ -60,8 +61,8 @@ def merge_intrinsics(fx, fy, x0, y0):
     K[:,3,3] = 1.0
     return K
 def merge_rt(r, t):
-
-
+    # r is B x 3 x 3
+    # t is B x 3
     B, C, D = list(r.shape)
     B2, D2 = list(t.shape)
     assert(C==3)
@@ -94,10 +95,10 @@ def get_camM_T_camXs(origin_T_camXs, ind=0):
         for s in list(range(S)):
             camM_T_camXs[b,s] = torch.matmul(camM_T_origin, origin_T_camXs[b,s])
     return camM_T_camXs
-def safe_inverse(a):
+def safe_inverse(a): #parallel version
     B, _, _ = list(a.shape)
     inv = a.clone()
-    r_transpose = a[:, :3, :3].transpose(1,2)
+    r_transpose = a[:, :3, :3].transpose(1,2) #inverse of rotation matrix
 
     inv[:, :3, :3] = r_transpose
     inv[:, :3, 3:4] = -torch.matmul(r_transpose, a[:, :3, 3:4])
@@ -112,7 +113,7 @@ def safe_inverse_single(a):
     t = t.view(3,1)
     r_transpose = r.t()
     inv = torch.cat([r_transpose, -torch.matmul(r_transpose, t)], 1)
-    bottom_row = a[3:4, :]
+    bottom_row = a[3:4, :] # this is [0, 0, 0, 1]
     inv = torch.cat([inv, bottom_row], 0)
     return inv
 def apply_4x4(RT, xyz):
@@ -120,7 +121,7 @@ def apply_4x4(RT, xyz):
     ones = torch.ones_like(xyz[:,:,0:1])
     xyz1 = torch.cat([xyz, ones], 2)
     xyz1_t = torch.transpose(xyz1, 1, 2)
-
+    # this is B x 4 x N
     xyz2_t = torch.matmul(RT, xyz1_t)
     xyz2 = torch.transpose(xyz2_t, 1, 2)
     xyz2 = xyz2[:,:,:3]
@@ -128,7 +129,7 @@ def apply_4x4(RT, xyz):
 def matmul2(mat1, mat2):
     return torch.matmul(mat1, mat2)
 def normalize_grid3d(grid_z, grid_y, grid_x, Z, Y, X, clamp_extreme=True):
-
+    # make things in [-1,1]
     grid_z = 2.0*(grid_z / float(Z-1)) - 1.0
     grid_y = 2.0*(grid_y / float(Y-1)) - 1.0
     grid_x = 2.0*(grid_x / float(X-1)) - 1.0
@@ -140,7 +141,7 @@ def normalize_grid3d(grid_z, grid_y, grid_x, Z, Y, X, clamp_extreme=True):
 
     return grid_z, grid_y, grid_x
 def meshgrid3d(B, Z, Y, X, stack=False, norm=False, device='cuda'):
-
+    # returns a meshgrid sized B x Z x Y x X
 
     grid_z = torch.linspace(0.0, Z-1, Z, device=device)
     grid_z = torch.reshape(grid_z, [1, Z, 1, 1])
@@ -159,24 +160,24 @@ def meshgrid3d(B, Z, Y, X, stack=False, norm=False, device='cuda'):
             grid_z, grid_y, grid_x, Z, Y, X)
 
     if stack:
-
-
+        # note we stack in xyz order
+        # (see https://pytorch.org/docs/stable/nn.functional.html#torch.nn.functional.grid_sample)
         grid = torch.stack([grid_x, grid_y, grid_z], dim=-1)
         return grid
     else:
         return grid_z, grid_y, grid_x
 def gridcloud3d(B, Z, Y, X, norm=False, device='cuda'):
-
+    # we want to sample for each location in the grid
     grid_z, grid_y, grid_x = meshgrid3d(B, Z, Y, X, norm=norm, device=device)
     x = torch.reshape(grid_x, [B, -1])
     y = torch.reshape(grid_y, [B, -1])
     z = torch.reshape(grid_z, [B, -1])
-
+    # these are B x N
     xyz = torch.stack([x, y, z], dim=2)
-
+    # this is B x N x 3
     return xyz
 def normalize_grid2d(grid_y, grid_x, Y, X, clamp_extreme=True):
-
+    # make things in [-1,1]
     grid_y = 2.0*(grid_y / float(Y-1)) - 1.0
     grid_x = 2.0*(grid_x / float(X-1)) - 1.0
 
@@ -186,7 +187,7 @@ def normalize_grid2d(grid_y, grid_x, Y, X, clamp_extreme=True):
 
     return grid_y, grid_x
 def meshgrid2d(B, Y, X, stack=False, norm=False, device='cuda'):
-
+    # returns a meshgrid sized B x Y x X
 
     grid_y = torch.linspace(0.0, Y-1, Y, device=torch.device(device))
     grid_y = torch.reshape(grid_y, [1, Y, 1])
@@ -201,12 +202,12 @@ def meshgrid2d(B, Y, X, stack=False, norm=False, device='cuda'):
             grid_y, grid_x, Y, X)
 
     if stack:
-
-
+        # note we stack in xy order
+        # (see https://pytorch.org/docs/stable/nn.functional.html#torch.nn.functional.grid_sample)
         grid = torch.stack([grid_x, grid_y], dim=-1)
         return grid
     else:
-        return grid_y, grid_x
+        return grid_y, grid_x   
 def scale_intrinsics(K, sx, sy):
     fx, fy, x0, y0 = split_intrinsics(K)
     fx = fx*sx
@@ -245,7 +246,7 @@ class Vox_util(object):
             self.XMAX += self.default_vox_size_X * X_pad
 
         if assert_cube:
-
+            # we assume cube voxels
             if (not np.isclose(self.default_vox_size_X, self.default_vox_size_Y)) or (not np.isclose(self.default_vox_size_X, self.default_vox_size_Z)):
                 print('Z, Y, X', Z, Y, X)
                 print('bounds for this iter:',
@@ -368,7 +369,7 @@ class Vox_util(object):
             mask[dist < 0.1] = 0
 
         if clean_eps > 0:
-            xyz_round = torch.round(xyz)
+            xyz_round = torch.round(xyz) # B, N, 3
             dist = torch.norm(xyz_round - xyz, dim=2)
             mask[dist > clean_eps] = 0
 
@@ -417,11 +418,11 @@ class Vox_util(object):
             mask[dist < 0.1] = 0
 
         if clean_eps > 0:
-            xyz_round = torch.round(xyz)
+            xyz_round = torch.round(xyz) 
             dist = torch.norm(xyz_round - xyz, dim=2)
             mask[dist > clean_eps] = 0
 
-        x = x*mask
+        x = x*mask 
         y = y*mask
         z = z*mask
         feat = feat*mask.unsqueeze(-1)
@@ -433,7 +434,7 @@ class Vox_util(object):
         y = torch.clamp(y, 0, Y-1).int()
         z = torch.clamp(z, 0, Z-1).int()
 
-
+        # permute point orders
         perm = torch.randperm(N)
         x = x[:, perm]
         y = y[:, perm]
@@ -455,10 +456,10 @@ class Vox_util(object):
         vox_inds = base + z * dim2 + y * dim3 + x
         feat_voxels = torch.zeros((B*Z*Y*X, D2), device=xyz.device).float()
         feat_voxels[vox_inds.long()] = feat
-
+        # zero out the singularity
         feat_voxels[base.long()] = 0.0
         feat_voxels = feat_voxels.reshape(B, Z, Y, X, D2).permute(0, 4, 1, 2, 3)
-
+        # B x C x Z x Y x X
         return feat_voxels
 
     def unproject_image_to_mem(self, rgb_camB, pixB_T_camA, camB_T_camA, Z, Y, X, assert_cube=False, xyz_camA=None):
@@ -485,8 +486,9 @@ class Vox_util(object):
         valid_mem = (x_valid & y_valid & z_valid).reshape(B, 1, Z, Y, X).float()
 
 
+        # native pytorch version
         y_pixB, x_pixB = normalize_grid2d(y, x, H, W)
-
+        # since we want a 3d output, we need 5d tensors
         z_pixB = torch.zeros_like(x)
         xyz_pixB = torch.stack([x_pixB, y_pixB, z_pixB], axis=2)
         rgb_camB = rgb_camB.unsqueeze(2)
@@ -532,7 +534,7 @@ class Vox_util(object):
         values = torch.reshape(values, (B, C, Z, Y, X))
         values = values * valid_mem
         return values
-
+    
 
     def apply_mem_T_ref_to_lrtlist(self, lrtlist_cam, Z, Y, X, assert_cube=False):
 
@@ -549,10 +551,10 @@ class Vox_util(object):
 
         if grid is None:
             grid_z, grid_y, grid_x = meshgrid3d(B, Z, Y, X, stack=False, norm=False, device=xyz.device)
-
+            # note the default stack is on -1
             grid = torch.stack([grid_x, grid_y, grid_z], dim=1)
-
-
+            # this is B x 3 x Z x Y x X
+            
         xyz = xyz.reshape(B, N, 3, 1, 1, 1)
         grid = grid.reshape(B, 1, 3, Z, Y, X)
 
@@ -562,7 +564,7 @@ class Vox_util(object):
             radius = radius.clamp(min=0.01)
 
         if soft:
-            off = grid - xyz
+            off = grid - xyz # B,N,3,Z,Y,X
 
             dist_grid = torch.sum(off**2, dim=2, keepdim=False)
 
@@ -577,10 +579,10 @@ class Vox_util(object):
             else:
                 return mask
         else:
-            assert(False)
+            assert(False) # something is wrong with this. come back later to debug
 
             dist_grid = torch.norm(grid - xyz, dim=2, keepdim=False)
-
+            # this is 0 at/near the xyz, and increases by 1 for each voxel away
 
             radius = radius.reshape(B, N, 1, 1, 1)
 
@@ -589,8 +591,9 @@ class Vox_util(object):
             return within_radius_mask
 
     def xyz2circles_bev(self, xyz, radius, Z, Y, X, already_mem=True, also_offset=False):
-
-
+        # xyz is B x N x 3
+        # radius is B x N or broadcastably so
+        # output is B x N x Z x Y x X
         B, N, D = list(xyz.shape)
         assert(D==3)
         if not already_mem:
@@ -599,41 +602,44 @@ class Vox_util(object):
         xz = torch.stack([xyz[:,:,0], xyz[:,:,2]], dim=2)
 
         grid_z, grid_x = meshgrid2d(B, Z, X, stack=False, norm=False, device=xyz.device)
-
+        # note the default stack is on -1
         grid = torch.stack([grid_x, grid_z], dim=1)
-
+        # this is B x 2 x Z x X
 
         xz = xz.reshape(B, N, 2, 1, 1)
         grid = grid.reshape(B, 1, 2, Z, X)
+        # these are ready to broadcast to B x N x Z x X
 
-
+        # round the points, so that at least one value matches the grid perfectly,
+        # and we get a value of 1 there (since exp(0)==1)
         xz = xz.round()
 
         if torch.is_tensor(radius):
             radius = radius.clamp(min=0.01)
 
-        off = grid - xz
-
+        off = grid - xz # B,N,2,Z,X
+        # interpret radius as sigma
         dist_grid = torch.sum(off**2, dim=2, keepdim=False)
-
+        # this is B x N x Z x X
         if torch.is_tensor(radius):
             radius = radius.reshape(B, N, 1, 1, 1)
         mask = torch.exp(-dist_grid/(2*radius*radius))
-
+        # zero out near zero
         mask[mask < 0.001] = 0.0
-
-
+        
+        # add a Y dim
         mask = mask.unsqueeze(-2)
         off = off.unsqueeze(-2)
-
-
+        # # B,N,2,Z,1,X
+        
         if also_offset:
             return mask, off
         else:
             return mask
 def camera2pixels(xyz, pix_T_cam):
-
-
+    # xyz is shaped B x H*W x 3
+    # returns xy, shaped B x H*W x 2
+    
     fx, fy, x0, y0 = split_intrinsics(pix_T_cam)
     x, y, z = torch.unbind(xyz, dim=-1)
     B = list(z.shape)[0]
@@ -651,12 +657,13 @@ def camera2pixels(xyz, pix_T_cam):
     x = (x*fx)/z + x0
     y = (y*fy)/z + y0
     xy = torch.stack([x, y], dim=-1)
-    return xy
+    return xy        
 def reduce_masked_mean(x, mask, dim=None, keepdim=False):
-
-
+    # x and mask are the same shape, or at least broadcastably so < actually it's safer if you disallow broadcasting
+    # returns shape-1
+    # axis can be a list of axes
     for (a,b) in zip(x.size(), mask.size()):
-        assert(a==b)
+        assert(a==b) # some shape mismatch!
     prod = x*mask
     if dim is None:
         numer = torch.sum(prod)
@@ -668,11 +675,11 @@ def reduce_masked_mean(x, mask, dim=None, keepdim=False):
     mean = numer/denom
     return mean
 def GN(C, max_groups=32):
-
+    # Use the largest group count (<= max_groups) that divides C
     for g in range(min(max_groups, C), 0, -1):
         if C % g == 0:
             return nn.GroupNorm(g, C)
-    return nn.GroupNorm(1, C)
+    return nn.GroupNorm(1, C) 
 def make_head_from100(in_ch: int = 64, mid_ch: int = 64, align_corners: bool = False):
 
     return nn.Sequential(
@@ -705,6 +712,7 @@ class Up(nn.Module):
 
         x1 = torch.cat([x2, x1], dim=1)
         return self.conv(x1)
+    
 
 
 class BevEncode_effi_B0(nn.Module):
@@ -719,7 +727,7 @@ class BevEncode_effi_B0(nn.Module):
             nn.Conv2d(112, 64, kernel_size=3, padding=1, bias=False),
             GN(64),
             nn.ReLU(inplace=True),)
-
+        
         self.up2 = nn.Sequential(
             nn.Upsample(size=(50, 50), mode='bilinear',
                         align_corners=True),
@@ -746,7 +754,7 @@ class BevEncode_effi_B0(nn.Module):
             nn.Conv2d(64, 64, kernel_size=3, padding=1, bias=False),
             GN(64),
             nn.ReLU(inplace=True),
-
+            
             nn.Conv2d(64, 1, kernel_size=1, padding=0),
         )
 
@@ -757,7 +765,7 @@ class BevEncode_effi_B0(nn.Module):
             nn.Conv2d(64, 64, kernel_size=3, padding=1, bias=False),
             GN(64),
             nn.ReLU(inplace=True),
-
+            
             nn.Conv2d(64, 1, kernel_size=1, padding=0),
         )
 
@@ -768,7 +776,7 @@ class BevEncode_effi_B0(nn.Module):
             nn.Conv2d(64, 64, kernel_size=3, padding=1, bias=False),
             GN(64),
             nn.ReLU(inplace=True),
-
+            
             nn.Conv2d(64, 1, kernel_size=1, padding=0),
         )
         self.up1_veh = Up(64 + 64, 64)
@@ -778,7 +786,7 @@ class BevEncode_effi_B0(nn.Module):
             nn.Conv2d(64, 64, kernel_size=3, padding=1, bias=False),
             GN(64),
             nn.ReLU(inplace=True),
-
+            
             nn.Conv2d(64, 1, kernel_size=1, padding=0),
         )
         self.up1_stop = Up(64 + 64, 64)
@@ -788,7 +796,7 @@ class BevEncode_effi_B0(nn.Module):
             nn.Conv2d(64, 64, kernel_size=3, padding=1, bias=False),
             GN(64),
             nn.ReLU(inplace=True),
-
+            
             nn.Conv2d(64, 1, kernel_size=1, padding=0),
         )
 
@@ -799,17 +807,17 @@ class BevEncode_effi_B0(nn.Module):
         x = self.trunk._swish(self.trunk._bn0(self.trunk._conv_stem(x)))
         prev_x = x
 
-
+        # Blocks
         for idx, block in enumerate(self.trunk._blocks):
             drop_connect_rate = self.trunk._global_params.drop_connect_rate
             if drop_connect_rate:
-                drop_connect_rate *= float(idx) / len(self.trunk._blocks)
+                drop_connect_rate *= float(idx) / len(self.trunk._blocks)  # scale drop connect_rate
             x = block(x, drop_connect_rate=drop_connect_rate)
             if prev_x.size(2) > x.size(2):
                 endpoints.append(prev_x)
             prev_x = x
 
-
+        # Head
         endpoints.append(x)
         del endpoints[0]
         return endpoints
@@ -825,7 +833,7 @@ class BevEncode_effi_B0(nn.Module):
 
         lane_broken = self.up1_lane(ups2, ups)
         lane_broken = self.up2_lane(lane_broken)
-
+        
         lane_solid = self.up1_lane2(ups2, ups)
         lane_solid = self.up2_lane2(lane_solid)
 
@@ -837,6 +845,7 @@ class BevEncode_effi_B0(nn.Module):
 
         stop = self.up1_stop(ups2, ups)
         stop = self.up2_stop(stop)
+
 
 
         return road, lane_broken,lane_solid, veh, ped, stop
@@ -855,13 +864,13 @@ class FPN(nn.Module):
     def forward(self, x_list):
 
         laterals = [conv(x) for conv, x in zip(self.lateral_convs, x_list)]
-
+        
         for i in range(len(laterals) - 1, 0, -1):
             upsampled = F.interpolate(laterals[i], size=laterals[i-1].shape[-2:], mode='nearest')
             laterals[i-1] = laterals[i-1] + upsampled
-
+            
         outs = [conv(x) for conv, x in zip(self.fpn_convs, laterals)]
-
+        
         return outs
 class Encoder_inter(nn.Module):
     def __init__(self, data_conf,C):
@@ -880,16 +889,20 @@ class Encoder_inter(nn.Module):
         return x
 
 
+
+
 class VanillaSelfAttention(nn.Module):
     def __init__(self, dim=128, dropout=0.1):
         super(VanillaSelfAttention, self).__init__()
-        self.dim = dim
+        self.dim = dim 
         self.dropout = nn.Dropout(dropout)
         self.deformable_attention = MSDeformAttn(d_model=dim, n_levels=1, n_heads=4, n_points=8)
         self.output_proj = nn.Linear(dim, dim)
 
     def forward(self, query, query_pos=None):
-
+        '''
+        query: (B, N, C)
+        '''
         inp_residual = query.clone()
 
         if query_pos is not None:
@@ -911,7 +924,7 @@ class VanillaSelfAttention(nn.Module):
         input_spatial_shapes = query.new_zeros([1,2]).long()
         input_spatial_shapes[:] = 200
         input_level_start_index = query.new_zeros([1,]).long()
-        queries = self.deformable_attention(query, reference_points, query.clone(),
+        queries = self.deformable_attention(query, reference_points, query.clone(), 
             input_spatial_shapes, input_level_start_index)
 
         queries = self.output_proj(queries)
@@ -919,7 +932,7 @@ class VanillaSelfAttention(nn.Module):
         return self.dropout(queries) + inp_residual
 
 class SpatialCrossAttention(nn.Module):
-
+    # From https://github.com/zhiqi-li/BEVFormer
 
     def __init__(self, dim=128, dropout=0.1):
         super(SpatialCrossAttention, self).__init__()
@@ -929,7 +942,12 @@ class SpatialCrossAttention(nn.Module):
         self.output_proj = nn.Linear(dim, dim)
 
     def forward(self, query, key, value,level_start_index=None, query_pos=None, reference_points_cam=None, spatial_shapes=None, bev_mask=None):
-
+        '''
+        query: (B, N, C)
+        key: (S, M, B, C)
+        reference_points_cam: (S, B, N, D, 2), in 0-1
+        bev_mask: (S. B, N, D)
+        '''
         inp_residual = query
         slots = torch.zeros_like(query)
 
@@ -972,7 +990,7 @@ class SpatialCrossAttention(nn.Module):
             for i, index_query_per_img in enumerate(indexes):
                 slots[j, index_query_per_img] += queries[j, i, :len(index_query_per_img)]
 
-        count = bev_mask.sum(-1) > 0
+        count = bev_mask.sum(-1) > 0 
         count = count.permute(1, 2, 0).sum(-1)
         count = torch.clamp(count, min=1.0)
         slots = slots / count[..., None]
@@ -981,11 +999,12 @@ class SpatialCrossAttention(nn.Module):
         return self.dropout(slots) + inp_residual
 
 
+
 class bevformer(nn.Module):
     def __init__(self, data_conf,):
         super(bevformer, self).__init__()
         self.data_conf = data_conf
-
+        
         self.feat2d_dim = feat2d_dim = latent_dim = 256
 
         self.encoder = Encoder_inter(data_conf,feat2d_dim)
@@ -998,8 +1017,8 @@ class bevformer(nn.Module):
             assert_cube=False)
 
 
-        self.bev_queries = nn.Parameter(0.1*torch.randn(latent_dim, Z, X))
-        self.bev_queries_pos = nn.Parameter(0.1*torch.randn(latent_dim, Z, X))
+        self.bev_queries = nn.Parameter(0.1*torch.randn(latent_dim, Z, X)) # C, Z, X
+        self.bev_queries_pos = nn.Parameter(0.1*torch.randn(latent_dim, Z, X)) # C, Z, X
         num_layers = 6
         self.num_layers = num_layers
 
@@ -1040,19 +1059,19 @@ class bevformer(nn.Module):
         ego_T_camXs = merge_rtlist(
             cam_pam['rots'],
             cam_pam['trans']
-        ).cuda()
+        ).cuda()  # (B, N, 4, 4)
 
         bev_imgs = __p(bev_imgs)
 
         pix_T_cams_ = __p(pix_T_cams)
 
-
-        ego_T_camXs_ = __p(ego_T_camXs)
-        camXs_T_ego_ = safe_inverse(ego_T_camXs_)
+        # camXs_T_ego: ego -> camera transform
+        ego_T_camXs_ = __p(ego_T_camXs)          # (B*N, 4, 4)
+        camXs_T_ego_ = safe_inverse(ego_T_camXs_)      
         feat_flatten = []
         spatial_shapes = []
 
-        mlvl_feats = self.encoder(bev_imgs)
+        mlvl_feats = self.encoder(bev_imgs) 
         for lvl, feat in enumerate(mlvl_feats):
             BN, C, Hf, Wf = feat.shape
 
@@ -1066,19 +1085,20 @@ class bevformer(nn.Module):
         spatial_shapes = torch.as_tensor(spatial_shapes, dtype=torch.long, device=bev_keys.device)
 
         level_start_index = torch.cat((
-            spatial_shapes.new_zeros((1,)),
+            spatial_shapes.new_zeros((1,)), 
             spatial_shapes.prod(1).cumsum(0)[:-1]
         ))
 
 
-        bev_queries = self.bev_queries.clone().unsqueeze(0).repeat(B,1,1,1).reshape(B, self.feat2d_dim, -1).permute(0,2,1)
+
+        bev_queries = self.bev_queries.clone().unsqueeze(0).repeat(B,1,1,1).reshape(B, self.feat2d_dim, -1).permute(0,2,1) # B, Z*X, C
 
 
-        bev_queries_pos = self.bev_queries_pos.clone().unsqueeze(0).repeat(B,1,1,1).reshape(B, self.feat2d_dim, -1).permute(0,2,1)
+        bev_queries_pos = self.bev_queries_pos.clone().unsqueeze(0).repeat(B,1,1,1).reshape(B, self.feat2d_dim, -1).permute(0,2,1) # B, Z*X, C
 
         xyz_mem_ = gridcloud3d(B * N, Z, Y, X, norm=False, device=bev_imgs.device)
 
-
+        # Interpret the resulting coordinates as the ego frame
         xyz_ego_ = self.vox_util.Mem2Ref(
             xyz_mem_,
             Z,
@@ -1087,10 +1107,10 @@ class bevformer(nn.Module):
             assert_cube=False
         )
 
-
+        # ego -> each camera
         xyz_camXs_ = apply_4x4(camXs_T_ego_, xyz_ego_)
 
-
+        # camera -> image pixel
         xy_camXs_ = camera2pixels(xyz_camXs_, pix_T_cams_)
         reference_points_cam = xy_camXs_.reshape(B, N, Z, Y, X, 2).permute(1, 0, 2, 4, 3, 5).reshape(N, B, Z*X, Y, 2)
         reference_points_cam[..., 0:1] = reference_points_cam[..., 0:1] / float(W)
@@ -1101,17 +1121,18 @@ class bevformer(nn.Module):
                     & (reference_points_cam[..., 1:2] < 1.0)
                     & (reference_points_cam[..., 0:1] < 1.0)
                     & (reference_points_cam[..., 0:1] > 0.0)).squeeze(-1)
+        
 
 
         for i in range(self.num_layers):
             bev_queries = self.self_attn_layers[i](bev_queries, bev_queries_pos)
             bev_queries = self.norm1_layers[i](bev_queries)
 
-            bev_queries = self.cross_attn_layers[i](bev_queries, bev_keys, bev_keys,
+            bev_queries = self.cross_attn_layers[i](bev_queries, bev_keys, bev_keys, 
                 level_start_index=level_start_index,
                 query_pos=bev_queries_pos,
                 reference_points_cam = reference_points_cam,
-                spatial_shapes = spatial_shapes,
+                spatial_shapes = spatial_shapes, 
                 bev_mask = bev_mask)
             bev_queries = self.norm2_layers[i](bev_queries)
             bev_queries = bev_queries + self.ffn_layers[i](bev_queries)
@@ -1123,3 +1144,6 @@ class bevformer(nn.Module):
         road, lane_broken,lane_solid, veh, ped, stop=self.decoder(feat_bev)
 
         return road, lane_broken,lane_solid, veh, ped, stop
+    
+
+

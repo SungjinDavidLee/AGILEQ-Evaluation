@@ -1,3 +1,13 @@
+#!/usr/bin/env python
+
+# Copyright (c) 2018 Intel Labs.
+# authors: German Ros (german.ros@intel.com)
+#
+# This work is licensed under the terms of the MIT license.
+# For a copy, see <https://opensource.org/licenses/MIT>.
+
+""" This module contains PID controllers to perform lateral and longitudinal control. """
+
 from collections import deque
 import math
 
@@ -8,10 +18,24 @@ from carla_env.tools.misc import get_speed
 
 
 class VehiclePIDController():
-
+    """
+    VehiclePIDController is the combination of two PID controllers (lateral and longitudinal) to perform the
+    low level control a vehicle from client side
+    """
 
     def __init__(self, vehicle, args_lateral=None, args_longitudinal=None):
-
+        """
+        :param vehicle: actor to apply to local planner logic onto
+        :param args_lateral: dictionary of arguments to set the lateral PID controller using the following semantics:
+                             K_P -- Proportional term
+                             K_D -- Differential term
+                             K_I -- Integral term
+        :param args_longitudinal: dictionary of arguments to set the longitudinal PID controller using the following
+        semantics:
+                             K_P -- Proportional term
+                             K_D -- Differential term
+                             K_I -- Integral term
+        """
         if not args_lateral:
             args_lateral = {'K_P': 1.0, 'K_D': 0.0, 'K_I': 0.0}
         if not args_longitudinal:
@@ -23,7 +47,14 @@ class VehiclePIDController():
         self._lat_controller = PIDLateralController(self._vehicle, **args_lateral)
 
     def run_step(self, target_speed, waypoint):
+        """
+        Execute one step of control invoking both lateral and longitudinal PID controllers to reach a target waypoint
+        at a given target_speed.
 
+        :param target_speed: desired vehicle speed
+        :param waypoint: target location encoded as a waypoint
+        :return: distance (in meters) to the waypoint
+        """
         throttle = self._lon_controller.run_step(target_speed)
         steering = self._lat_controller.run_step(waypoint)
 
@@ -38,10 +69,18 @@ class VehiclePIDController():
 
 
 class PIDLongitudinalController():
-
+    """
+    PIDLongitudinalController implements longitudinal control using a PID.
+    """
 
     def __init__(self, vehicle, K_P=1.0, K_D=0.0, K_I=0.0, dt=0.03):
-
+        """
+        :param vehicle: actor to apply to local planner logic onto
+        :param K_P: Proportional term
+        :param K_D: Differential term
+        :param K_I: Integral term
+        :param dt: time differential in seconds
+        """
         self._vehicle = vehicle
         self._K_P = K_P
         self._K_D = K_D
@@ -50,7 +89,12 @@ class PIDLongitudinalController():
         self._e_buffer = deque(maxlen=30)
 
     def run_step(self, target_speed, debug=False):
+        """
+        Execute one step of longitudinal control to reach a given target speed.
 
+        :param target_speed: target speed in Km/h
+        :return: throttle control in the range [0, 1]
+        """
         current_speed = get_speed(self._vehicle)
 
         if debug:
@@ -59,7 +103,13 @@ class PIDLongitudinalController():
         return self._pid_control(target_speed, current_speed)
 
     def _pid_control(self, target_speed, current_speed):
+        """
+        Estimate the throttle of the vehicle based on the PID equations
 
+        :param target_speed:  target speed in Km/h
+        :param current_speed: current speed of the vehicle in Km/h
+        :return: throttle control in the range [0, 1]
+        """
         _e = (target_speed - current_speed)
         self._e_buffer.append(_e)
 
@@ -74,10 +124,18 @@ class PIDLongitudinalController():
 
 
 class PIDLateralController():
-
+    """
+    PIDLateralController implements lateral control using a PID.
+    """
 
     def __init__(self, vehicle, K_P=1.0, K_D=0.0, K_I=0.0, dt=0.03):
-
+        """
+        :param vehicle: actor to apply to local planner logic onto
+        :param K_P: Proportional term
+        :param K_D: Differential term
+        :param K_I: Integral term
+        :param dt: time differential in seconds
+        """
         self._vehicle = vehicle
         self._K_P = K_P
         self._K_D = K_D
@@ -86,11 +144,24 @@ class PIDLateralController():
         self._e_buffer = deque(maxlen=10)
 
     def run_step(self, waypoint):
+        """
+        Execute one step of lateral control to steer the vehicle towards a certain waypoin.
 
+        :param waypoint: target waypoint
+        :return: steering control in the range [-1, 1] where:
+            -1 represent maximum steering to left
+            +1 maximum steering to right
+        """
         return self._pid_control(waypoint, self._vehicle.get_transform())
 
     def _pid_control(self, waypoint, vehicle_transform):
+        """
+        Estimate the steering angle of the vehicle based on the PID equations
 
+        :param waypoint: target waypoint
+        :param vehicle_transform: current transform of the vehicle
+        :return: steering control in the range [-1, 1]
+        """
         v_begin = vehicle_transform.location
         v_end = v_begin + carla.Location(x=math.cos(math.radians(vehicle_transform.rotation.yaw)),
                                          y=math.sin(math.radians(vehicle_transform.rotation.yaw)))
