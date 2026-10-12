@@ -1,8 +1,10 @@
 # AGILE-Q evaluation
 
+[English](README.md) | [한국어](README_ko.md)
+
 This repository evaluates a trained AGILE-Q (CrossQ) driving policy in CARLA 0.9.15. The policy does not see ground truth: its BEV input comes from BEVFormer predictions (`best_bev_model.pth`) and its traffic-light input comes from TLCFormer (`best_traffic_model.pth`).
 
-Training code: AGILE-Q-train.
+Training code: [AGILEQ-Training / AGILEQ-train](https://github.com/SungjinDavidLee/AGILEQ-Training/tree/main/AGILEQ-train).
 
 ## Requirements
 - CARLA 0.9.15
@@ -16,6 +18,8 @@ export CARLA_ROOT=/path/to/CARLA_0.9.15
 ```
 The env launches CARLA from `$CARLA_ROOT` itself.
 
+> The commands below describe usage supported by the provided code. CARLA execution and evaluation were not tested during this README update.
+
 ## Model weights
 
 Download the model archive from [Google Drive](https://drive.google.com/file/d/1nC7NmAk6vBsQcedpB-zmNv05dSJVbUGO/view?usp=sharing), then extract it locally.
@@ -26,10 +30,8 @@ Copy the `.pth` files directly into the repository root, **next to `eval.py`**. 
 |---|---|---|
 | `best_bev_model.pth` | `AGILEQ-Evaluation/best_bev_model.pth` | `eval.py` and the bypass demo (BEVFormer) |
 | `best_traffic_model.pth` | `AGILEQ-Evaluation/best_traffic_model.pth` | `eval.py` and the bypass demo (TLCFormer) |
-| `best_bev_model_v2.pth` | `AGILEQ-Evaluation/best_bev_model_v2.pth` | `carla_RandomRoute_env_traffic.py`, if used |
-| `best_traffic_model_v2.pth` | `AGILEQ-Evaluation/best_traffic_model_v2.pth` | `carla_RandomRoute_env_traffic.py`, if used |
 
-Only the first two files are required by the default `eval.py` entrypoint. The perception weights are distributed through Google Drive; `git lfs pull` is not required to obtain them.
+These two files are required by the default `eval.py` entrypoint. The perception weights are distributed through Google Drive; `git lfs pull` is not required to obtain them.
 
 If the archive also contains an `ieee_results/` directory, copy that directory into the repository root **with its subdirectories intact**. The `.pth` perception weights and the policy `.zip` used by `--model` are separate files. If the archive contains only `.pth` files, provide a trained policy `.zip` separately.
 
